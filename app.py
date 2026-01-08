@@ -62,6 +62,9 @@ def compare_tables():
             project1, dataset1, table1, project2, dataset2, table2, primary_key
         )
 
+        # Add request stats to results
+        results['_request_stats'] = bq.get_request_summary()
+
         return jsonify(results)
 
     except Exception as e:
