@@ -54,12 +54,13 @@ def compare_tables():
         dataset2 = data.get('dataset2')
         table2 = data.get('table2')
         primary_key = data.get('primary_key')
+        where_filter = data.get('where_filter')
 
         if not all([project1, dataset1, table1, project2, dataset2, table2]):
             return jsonify({'error': 'Missing required parameters'}), 400
 
         results = comparator.run_full_comparison(
-            project1, dataset1, table1, project2, dataset2, table2, primary_key
+            project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter
         )
 
         # Add request stats to results

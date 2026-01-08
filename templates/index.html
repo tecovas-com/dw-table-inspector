@@ -5,22 +5,255 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BigQuery Table Inspector</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        .match { background-color: #d4edda !important; }
-        .mismatch { background-color: #f8d7da !important; }
-        .only-in-table1 { background-color: #fff3cd !important; }
-        .only-in-table2 { background-color: #cce5ff !important; }
-        .status-badge { font-size: 1.2rem; }
+        :root {
+            --bg-primary: #f8fafc;
+            --bg-card: #ffffff;
+            --border-color: #e2e8f0;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --accent-blue: #3b82f6;
+            --accent-blue-hover: #2563eb;
+            --success-bg: #dcfce7;
+            --success-border: #86efac;
+            --error-bg: #fee2e2;
+            --error-border: #fca5a5;
+            --warning-bg: #fef3c7;
+            --warning-border: #fcd34d;
+            --info-bg: #dbeafe;
+            --info-border: #93c5fd;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        .card {
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .card-header {
+            background-color: var(--bg-card);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 1.25rem;
+            border-radius: 12px 12px 0 0 !important;
+        }
+
+        .card-header h5 {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .form-label {
+            font-weight: 500;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .form-control, .form-select {
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 0.625rem 0.875rem;
+            font-size: 0.9rem;
+        }
+
+        .form-control:focus, .form-select:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+
+        .btn-primary {
+            background-color: var(--accent-blue);
+            border-color: var(--accent-blue);
+            border-radius: 8px;
+            font-weight: 500;
+            padding: 0.625rem 1.5rem;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-blue-hover);
+            border-color: var(--accent-blue-hover);
+        }
+
+        .table {
+            font-size: 0.875rem;
+        }
+
+        .table thead th {
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.025em;
+            color: var(--text-secondary);
+            background-color: #f1f5f9 !important;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        .table-dark th {
+            background-color: #334155 !important;
+            color: #f8fafc;
+        }
+
+        .match td {
+            background-color: var(--success-bg) !important;
+        }
+
+        .mismatch td {
+            background-color: var(--error-bg) !important;
+        }
+
+        .only-in-table1 td {
+            background-color: var(--warning-bg) !important;
+        }
+
+        .only-in-table2 td {
+            background-color: var(--info-bg) !important;
+        }
+
+        .status-badge {
+            font-size: 1rem;
+            padding: 0.5rem 1.25rem;
+            border-radius: 6px;
+        }
+
+        .badge {
+            font-weight: 500;
+            padding: 0.35rem 0.65rem;
+            border-radius: 6px;
+        }
+
         .loading { display: none; }
         .results-section { display: none; }
         .table-responsive { max-height: 500px; overflow-y: auto; }
-        pre { background: #f8f9fa; padding: 10px; border-radius: 4px; max-height: 300px; overflow: auto; }
+
+        pre {
+            background: #f1f5f9;
+            padding: 1rem;
+            border-radius: 8px;
+            max-height: 300px;
+            overflow: auto;
+            font-size: 0.8rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .vs-divider {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .section-label {
+            font-weight: 600;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--accent-blue);
+            margin-bottom: 1rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .legend {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+            font-size: 0.8rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+
+        .legend-filter {
+            cursor: pointer;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            transition: opacity 0.2s, background-color 0.2s;
+            user-select: none;
+        }
+
+        .legend-filter:hover {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+
+        .legend-filter:not(.active) {
+            opacity: 0.4;
+        }
+
+        .legend-filter:not(.active) .legend-color {
+            background-color: #e5e7eb !important;
+            border-color: #d1d5db !important;
+        }
+
+        .btn-copy {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+        }
+
+        .btn-copy.copied {
+            background-color: var(--success-bg);
+            border-color: var(--success-border);
+            color: #166534;
+        }
+
+        /* Column Statistics table - controlled column widths */
+        #statsTableWrapper {
+            width: 100%;
+            table-layout: fixed;
+        }
+
+        #statsTableWrapper th:first-child,
+        #statsTableWrapper td:first-child {
+            width: 180px;
+            max-width: 180px;
+        }
+
+        #statsTableWrapper th:not(:first-child),
+        #statsTableWrapper td:not(:first-child) {
+            width: 100px;
+            max-width: 100px;
+        }
+
+        #statsTableWrapper td,
+        #statsTableWrapper th {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        #statsTableWrapper td {
+            cursor: help;
+        }
     </style>
 </head>
 <body>
-    <div class="container-fluid py-4">
-        <h1 class="mb-4">BigQuery Table Inspector</h1>
-        <p class="text-muted mb-4">Compare two BigQuery tables across different projects to verify schema, row counts, and data integrity.</p>
+    <div class="container-fluid py-4" style="max-width: 1400px;">
+        <h1 class="mb-2" style="font-weight: 700;">BigQuery Table Inspector</h1>
+        <p class="text-secondary mb-4">Compare two BigQuery tables across different projects to verify schema, row counts, and data integrity.</p>
 
         <!-- Table Selection -->
         <div class="card mb-4">
@@ -40,12 +273,12 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Dataset</label>
-                            <input type="text" id="dataset1" class="form-control" list="dataset1-list" placeholder="Type to filter..." autocomplete="off">
+                            <input type="text" id="dataset1" class="form-control" list="dataset1-list" placeholder="Type to filter..." autocomplete="off" value="stg_marketing">
                             <datalist id="dataset1-list"></datalist>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Table</label>
-                            <input type="text" id="table1" class="form-control" list="table1-list" placeholder="Type to filter..." autocomplete="off">
+                            <input type="text" id="table1" class="form-control" list="table1-list" placeholder="Type to filter..." autocomplete="off" value="stg_marketing__pinterest_performance">
                             <datalist id="table1-list"></datalist>
                         </div>
                     </div>
@@ -65,22 +298,28 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Dataset</label>
-                            <input type="text" id="dataset2" class="form-control" list="dataset2-list" placeholder="Type to filter..." autocomplete="off">
+                            <input type="text" id="dataset2" class="form-control" list="dataset2-list" placeholder="Type to filter..." autocomplete="off" value="dbt_lorenzo_stg_marketing">
                             <datalist id="dataset2-list"></datalist>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Table</label>
-                            <input type="text" id="table2" class="form-control" list="table2-list" placeholder="Type to filter..." autocomplete="off">
+                            <input type="text" id="table2" class="form-control" list="table2-list" placeholder="Type to filter..." autocomplete="off" value="stg_marketing__pinterest_performance">
                             <datalist id="table2-list"></datalist>
                         </div>
                     </div>
                 </div>
 
-                <!-- Primary Key -->
+                <!-- Primary Key and Filter -->
                 <div class="row mt-3">
                     <div class="col-md-6">
                         <label class="form-label">Primary Key Column (optional, for row-level comparison)</label>
-                        <input type="text" id="primaryKey" class="form-control" placeholder="e.g., id, transaction_id">
+                        <input type="text" id="primaryKey" class="form-control" placeholder="e.g., id or advertiser_id,campaign_id,date">
+                        <small class="form-text text-muted">For composite keys, separate with commas</small>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">WHERE Filter (optional, applies to all queries)</label>
+                        <input type="text" id="whereFilter" class="form-control" placeholder="e.g., date >= '2024-01-01' AND status = 'active'">
+                        <small class="form-text text-muted">SQL WHERE condition without the WHERE keyword</small>
                     </div>
                 </div>
 
@@ -121,16 +360,33 @@
                     <span id="schemaStatus" class="badge"></span>
                 </div>
                 <div class="card-body">
+                    <div class="legend" id="schemaLegend">
+                        <div class="legend-item legend-filter active" data-filter="match" onclick="toggleSchemaFilter('match')">
+                            <div class="legend-color" style="background-color: var(--success-bg); border: 1px solid var(--success-border);"></div>
+                            <span>Match</span>
+                        </div>
+                        <div class="legend-item legend-filter active" data-filter="mismatch" onclick="toggleSchemaFilter('mismatch')">
+                            <div class="legend-color" style="background-color: var(--error-bg); border: 1px solid var(--error-border);"></div>
+                            <span>Type/Mode differs</span>
+                        </div>
+                        <div class="legend-item legend-filter active" data-filter="only-in-table1" onclick="toggleSchemaFilter('only-in-table1')">
+                            <div class="legend-color" style="background-color: var(--warning-bg); border: 1px solid var(--warning-border);"></div>
+                            <span>Only in Source</span>
+                        </div>
+                        <div class="legend-item legend-filter active" data-filter="only-in-table2" onclick="toggleSchemaFilter('only-in-table2')">
+                            <div class="legend-color" style="background-color: var(--info-bg); border: 1px solid var(--info-border);"></div>
+                            <span>Only in Target</span>
+                        </div>
+                    </div>
                     <div class="table-responsive">
-                        <table class="table table-sm table-bordered">
+                        <table class="table table-sm table-bordered mb-0">
                             <thead class="table-dark">
                                 <tr>
                                     <th>Column</th>
-                                    <th>Table A Type</th>
-                                    <th>Table A Mode</th>
-                                    <th>Table B Type</th>
-                                    <th>Table B Mode</th>
-                                    <th>Status</th>
+                                    <th>Source Type</th>
+                                    <th>Source Mode</th>
+                                    <th>Target Type</th>
+                                    <th>Target Mode</th>
                                 </tr>
                             </thead>
                             <tbody id="schemaTable">
@@ -144,21 +400,24 @@
             <div class="card mb-4">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">Row Count Comparison</h5>
-                    <span id="rowCountStatus" class="badge"></span>
+                    <div class="d-flex align-items-center gap-2">
+                        <button id="copyRowCountQuery" class="btn btn-outline-secondary btn-copy" onclick="copyRowCountQueries()">Copy Query</button>
+                        <span id="rowCountStatus" class="badge"></span>
+                    </div>
                 </div>
                 <div class="card-body">
                     <div class="row text-center">
                         <div class="col-md-4">
-                            <h6>Table A</h6>
-                            <p id="rowCount1" class="fs-3 fw-bold">-</p>
+                            <p class="stat-label">Source</p>
+                            <p id="rowCount1" class="stat-value">-</p>
                         </div>
                         <div class="col-md-4">
-                            <h6>Difference</h6>
-                            <p id="rowCountDiff" class="fs-3 fw-bold">-</p>
+                            <p class="stat-label">Difference</p>
+                            <p id="rowCountDiff" class="stat-value">-</p>
                         </div>
                         <div class="col-md-4">
-                            <h6>Table B</h6>
-                            <p id="rowCount2" class="fs-3 fw-bold">-</p>
+                            <p class="stat-label">Target</p>
+                            <p id="rowCount2" class="stat-value">-</p>
                         </div>
                     </div>
                 </div>
@@ -171,14 +430,23 @@
                     <span id="statsStatus" class="badge"></span>
                 </div>
                 <div class="card-body">
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: var(--success-bg); border: 1px solid var(--success-border);"></div>
+                            <span>Match</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background-color: var(--error-bg); border: 1px solid var(--error-border);"></div>
+                            <span>Mismatch</span>
+                        </div>
+                    </div>
                     <div class="table-responsive">
-                        <table class="table table-sm table-bordered">
+                        <table id="statsTableWrapper" class="table table-sm table-bordered mb-0">
                             <thead class="table-dark">
                                 <tr>
                                     <th rowspan="2">Column</th>
-                                    <th colspan="4" class="text-center">Table A</th>
-                                    <th colspan="4" class="text-center">Table B</th>
-                                    <th rowspan="2">Match</th>
+                                    <th colspan="4" class="text-center">Source</th>
+                                    <th colspan="4" class="text-center">Target</th>
                                 </tr>
                                 <tr>
                                     <th>Min</th>
@@ -198,22 +466,69 @@
                 </div>
             </div>
 
-            <!-- Row Mismatches -->
+            <!-- Row Diff (no primary key) -->
+            <div id="rowDiffCard" class="card mb-4 d-none">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Row Differences (EXCEPT DISTINCT)</h5>
+                    <div class="d-flex align-items-center gap-2">
+                        <button id="copyRowDiffSourceQuery" class="btn btn-outline-secondary btn-copy" onclick="copyRowDiffQuery('source')">Copy Source Query</button>
+                        <button id="copyRowDiffTargetQuery" class="btn btn-outline-secondary btn-copy" onclick="copyRowDiffQuery('target')">Copy Target Query</button>
+                        <span id="rowDiffStatus" class="badge"></span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center mb-4">
+                        <div class="col-md-6">
+                            <p class="stat-label">Rows only in Source</p>
+                            <p id="rowDiffSourceCount" class="stat-value">0</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p class="stat-label">Rows only in Target</p>
+                            <p id="rowDiffTargetCount" class="stat-value">0</p>
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <p class="stat-label mb-0">Sample rows only in Source (max 10)</p>
+                            <button id="copySampleSourceQuery" class="btn btn-outline-secondary btn-copy" onclick="copySampleQuery('source')">Copy Query</button>
+                        </div>
+                        <pre id="rowDiffSourceSample"></pre>
+                    </div>
+                    <div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <p class="stat-label mb-0">Sample rows only in Target (max 10)</p>
+                            <button id="copySampleTargetQuery" class="btn btn-outline-secondary btn-copy" onclick="copySampleQuery('target')">Copy Query</button>
+                        </div>
+                        <pre id="rowDiffTargetSample"></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row Mismatches (with primary key) -->
             <div id="mismatchesCard" class="card mb-4 d-none">
                 <div class="card-header">
-                    <h5 class="mb-0">Sample Row Differences</h5>
+                    <h5 class="mb-0">Sample Row Differences (by Primary Key)</h5>
                 </div>
                 <div class="card-body">
                     <div class="mb-4">
-                        <h6>Rows only in Table A (<span id="onlyIn1Count">0</span>)</h6>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <p class="stat-label mb-0">Rows only in Source (<span id="onlyIn1Count">0</span>)</p>
+                            <button id="copyPkSourceQuery" class="btn btn-outline-secondary btn-copy" onclick="copyPkQuery('source')">Copy Query</button>
+                        </div>
                         <pre id="onlyIn1"></pre>
                     </div>
                     <div class="mb-4">
-                        <h6>Rows only in Table B (<span id="onlyIn2Count">0</span>)</h6>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <p class="stat-label mb-0">Rows only in Target (<span id="onlyIn2Count">0</span>)</p>
+                            <button id="copyPkTargetQuery" class="btn btn-outline-secondary btn-copy" onclick="copyPkQuery('target')">Copy Query</button>
+                        </div>
                         <pre id="onlyIn2"></pre>
                     </div>
                     <div>
-                        <h6>Rows with different values (<span id="diffCount">0</span>)</h6>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <p class="stat-label mb-0">Rows with different values (<span id="diffCount">0</span>)</p>
+                            <button id="copyPkDiffQuery" class="btn btn-outline-secondary btn-copy" onclick="copyPkQuery('diff')">Copy Query</button>
+                        </div>
                         <pre id="diffRows"></pre>
                     </div>
                 </div>
@@ -268,6 +583,10 @@
                 const options = data.projects.map(p => `<option value="${p}">${p}</option>`).join('');
                 document.getElementById('project1').innerHTML = '<option value="">Select project...</option>' + options;
                 document.getElementById('project2').innerHTML = '<option value="">Select project...</option>' + options;
+
+                // DEV: Auto-select default projects
+                document.getElementById('project1').value = 'tecovas-staging';
+                document.getElementById('project2').value = 'tecovas-development';
             } catch (e) {
                 showError('Failed to load projects: ' + e.message);
             }
@@ -353,6 +672,7 @@
             const dataset2 = document.getElementById('dataset2').value;
             const table2 = document.getElementById('table2').value;
             const primaryKey = document.getElementById('primaryKey').value;
+            const whereFilter = document.getElementById('whereFilter').value;
 
             if (!project1 || !dataset1 || !table1 || !project2 || !dataset2 || !table2) {
                 showError('Please select both tables to compare.');
@@ -372,7 +692,8 @@
                     body: JSON.stringify({
                         project1, dataset1, table1,
                         project2, dataset2, table2,
-                        primary_key: primaryKey || null
+                        primary_key: primaryKey || null,
+                        where_filter: whereFilter || null
                     })
                 });
 
@@ -395,6 +716,9 @@
         function displayResults(data) {
             document.getElementById('resultsSection').style.display = 'block';
 
+            // Reset schema filters for new results
+            resetSchemaFilters();
+
             // Overall status
             const overallEl = document.getElementById('overallStatus');
             if (data.overall_match) {
@@ -411,19 +735,14 @@
             const schemaTable = document.getElementById('schemaTable');
             schemaTable.innerHTML = data.schema.details.map(col => {
                 let rowClass = '';
-                let statusText = '';
                 if (col.status === 'match') {
                     rowClass = 'match';
-                    statusText = 'Match';
                 } else if (col.status === 'mismatch') {
                     rowClass = 'mismatch';
-                    statusText = 'Type/Mode differs';
                 } else if (col.status === 'only_in_table1') {
                     rowClass = 'only-in-table1';
-                    statusText = 'Only in Table A';
                 } else if (col.status === 'only_in_table2') {
                     rowClass = 'only-in-table2';
-                    statusText = 'Only in Table B';
                 }
                 return `<tr class="${rowClass}">
                     <td>${col.column}</td>
@@ -431,7 +750,6 @@
                     <td>${col.table1_mode || '-'}</td>
                     <td>${col.table2_type || '-'}</td>
                     <td>${col.table2_mode || '-'}</td>
-                    <td>${statusText}</td>
                 </tr>`;
             }).join('');
 
@@ -442,7 +760,27 @@
 
             document.getElementById('rowCount1').textContent = data.row_counts.table1_count.toLocaleString();
             document.getElementById('rowCount2').textContent = data.row_counts.table2_count.toLocaleString();
-            document.getElementById('rowCountDiff').textContent = data.row_counts.difference.toLocaleString();
+
+            // Display signed difference with color
+            const diff = data.row_counts.difference;
+            const diffEl = document.getElementById('rowCountDiff');
+            const diffPrefix = diff > 0 ? '+' : '';
+            diffEl.textContent = diffPrefix + diff.toLocaleString();
+
+            // Color: red if positive (source has more), green if negative (target has more), neutral if 0
+            if (diff > 0) {
+                diffEl.style.color = '#dc2626'; // red
+            } else if (diff < 0) {
+                diffEl.style.color = '#16a34a'; // green
+            } else {
+                diffEl.style.color = 'inherit';
+            }
+
+            // Store row count queries for copy functionality
+            if (data.row_counts.queries) {
+                currentQueries.rowCount.source = data.row_counts.queries.source;
+                currentQueries.rowCount.target = data.row_counts.queries.target;
+            }
 
             // Column stats
             const statsStatus = document.getElementById('statsStatus');
@@ -452,35 +790,130 @@
             const statsTable = document.getElementById('statsTable');
             statsTable.innerHTML = data.column_stats.details.map(col => {
                 const rowClass = col.match ? 'match' : 'mismatch';
+                const formatCell = (value) => {
+                    const displayValue = value ?? '-';
+                    return `<td title="${displayValue}">${displayValue}</td>`;
+                };
                 return `<tr class="${rowClass}">
-                    <td>${col.column}</td>
-                    <td>${col.table1_min ?? '-'}</td>
-                    <td>${col.table1_max ?? '-'}</td>
-                    <td>${col.table1_nulls?.toLocaleString() ?? '-'}</td>
-                    <td>${col.table1_distinct?.toLocaleString() ?? '-'}</td>
-                    <td>${col.table2_min ?? '-'}</td>
-                    <td>${col.table2_max ?? '-'}</td>
-                    <td>${col.table2_nulls?.toLocaleString() ?? '-'}</td>
-                    <td>${col.table2_distinct?.toLocaleString() ?? '-'}</td>
-                    <td>${col.match ? 'Yes' : 'No'}</td>
+                    <td title="${col.column}">${col.column}</td>
+                    ${formatCell(col.table1_min)}
+                    ${formatCell(col.table1_max)}
+                    ${formatCell(col.table1_nulls?.toLocaleString())}
+                    ${formatCell(col.table1_distinct?.toLocaleString())}
+                    ${formatCell(col.table2_min)}
+                    ${formatCell(col.table2_max)}
+                    ${formatCell(col.table2_nulls?.toLocaleString())}
+                    ${formatCell(col.table2_distinct?.toLocaleString())}
                 </tr>`;
             }).join('');
 
-            // Mismatches
+            // Row Diff (no primary key - uses EXCEPT DISTINCT)
+            if (data.row_diff) {
+                document.getElementById('rowDiffCard').classList.remove('d-none');
+                document.getElementById('mismatchesCard').classList.add('d-none');
+
+                const sourceCount = data.row_diff.only_in_source_count || 0;
+                const targetCount = data.row_diff.only_in_target_count || 0;
+                const sourceSample = data.row_diff.only_in_source_sample || [];
+                const targetSample = data.row_diff.only_in_target_sample || [];
+                const sourceCountError = data.row_diff.only_in_source_error;
+                const targetCountError = data.row_diff.only_in_target_error;
+                const sourceSampleError = data.row_diff.only_in_source_sample_error;
+                const targetSampleError = data.row_diff.only_in_target_sample_error;
+
+                // Update status badge
+                const rowDiffStatus = document.getElementById('rowDiffStatus');
+                const hasErrors = sourceCountError || targetCountError || sourceSampleError || targetSampleError;
+                const rowsMatch = !hasErrors && sourceCount === 0 && targetCount === 0;
+                rowDiffStatus.textContent = hasErrors ? 'ERROR' : (rowsMatch ? 'MATCH' : 'MISMATCH');
+                rowDiffStatus.className = 'badge ' + (hasErrors ? 'bg-warning' : (rowsMatch ? 'bg-success' : 'bg-danger'));
+
+                // Update counts
+                document.getElementById('rowDiffSourceCount').textContent = sourceCountError ? 'Error' : sourceCount.toLocaleString();
+                document.getElementById('rowDiffTargetCount').textContent = targetCountError ? 'Error' : targetCount.toLocaleString();
+
+                // Update samples with error handling
+                const sourceSampleEl = document.getElementById('rowDiffSourceSample');
+                const targetSampleEl = document.getElementById('rowDiffTargetSample');
+
+                if (sourceSampleError) {
+                    sourceSampleEl.textContent = `Error: ${sourceSampleError}`;
+                    sourceSampleEl.style.color = '#dc2626';
+                } else {
+                    sourceSampleEl.textContent = sourceSample.length > 0 ? JSON.stringify(sourceSample, null, 2) : 'None';
+                    sourceSampleEl.style.color = '';
+                }
+
+                if (targetSampleError) {
+                    targetSampleEl.textContent = `Error: ${targetSampleError}`;
+                    targetSampleEl.style.color = '#dc2626';
+                } else {
+                    targetSampleEl.textContent = targetSample.length > 0 ? JSON.stringify(targetSample, null, 2) : 'None';
+                    targetSampleEl.style.color = '';
+                }
+
+                // Store row diff queries for copy functionality
+                if (data.row_diff.queries) {
+                    currentQueries.rowDiff.only_in_source = data.row_diff.queries.only_in_source;
+                    currentQueries.rowDiff.only_in_target = data.row_diff.queries.only_in_target;
+                    currentQueries.rowDiff.sample_only_in_source = data.row_diff.queries.sample_only_in_source;
+                    currentQueries.rowDiff.sample_only_in_target = data.row_diff.queries.sample_only_in_target;
+                }
+            } else {
+                document.getElementById('rowDiffCard').classList.add('d-none');
+            }
+
+            // Mismatches (with primary key)
             if (data.mismatches) {
                 document.getElementById('mismatchesCard').classList.remove('d-none');
+                document.getElementById('rowDiffCard').classList.add('d-none');
 
                 const onlyIn1 = data.mismatches.only_in_table1 || [];
                 const onlyIn2 = data.mismatches.only_in_table2 || [];
                 const diffRows = data.mismatches.different_values || [];
+                const onlyIn1Error = data.mismatches.only_in_table1_error;
+                const onlyIn2Error = data.mismatches.only_in_table2_error;
+                const diffRowsError = data.mismatches.different_values_error;
 
-                document.getElementById('onlyIn1Count').textContent = onlyIn1.length;
-                document.getElementById('onlyIn2Count').textContent = onlyIn2.length;
-                document.getElementById('diffCount').textContent = diffRows.length;
+                document.getElementById('onlyIn1Count').textContent = onlyIn1Error ? 'Error' : onlyIn1.length;
+                document.getElementById('onlyIn2Count').textContent = onlyIn2Error ? 'Error' : onlyIn2.length;
+                document.getElementById('diffCount').textContent = diffRowsError ? 'Error' : diffRows.length;
 
-                document.getElementById('onlyIn1').textContent = onlyIn1.length > 0 ? JSON.stringify(onlyIn1, null, 2) : 'None';
-                document.getElementById('onlyIn2').textContent = onlyIn2.length > 0 ? JSON.stringify(onlyIn2, null, 2) : 'None';
-                document.getElementById('diffRows').textContent = diffRows.length > 0 ? JSON.stringify(diffRows, null, 2) : 'None';
+                // Display data or error messages
+                const onlyIn1El = document.getElementById('onlyIn1');
+                const onlyIn2El = document.getElementById('onlyIn2');
+                const diffRowsEl = document.getElementById('diffRows');
+
+                if (onlyIn1Error) {
+                    onlyIn1El.textContent = `Error: ${onlyIn1Error}`;
+                    onlyIn1El.style.color = '#dc2626';
+                } else {
+                    onlyIn1El.textContent = onlyIn1.length > 0 ? JSON.stringify(onlyIn1, null, 2) : 'None';
+                    onlyIn1El.style.color = '';
+                }
+
+                if (onlyIn2Error) {
+                    onlyIn2El.textContent = `Error: ${onlyIn2Error}`;
+                    onlyIn2El.style.color = '#dc2626';
+                } else {
+                    onlyIn2El.textContent = onlyIn2.length > 0 ? JSON.stringify(onlyIn2, null, 2) : 'None';
+                    onlyIn2El.style.color = '';
+                }
+
+                if (diffRowsError) {
+                    diffRowsEl.textContent = `Error: ${diffRowsError}`;
+                    diffRowsEl.style.color = '#dc2626';
+                } else {
+                    diffRowsEl.textContent = diffRows.length > 0 ? JSON.stringify(diffRows, null, 2) : 'None';
+                    diffRowsEl.style.color = '';
+                }
+
+                // Store mismatch queries for copy functionality
+                if (data.mismatches.queries) {
+                    currentQueries.mismatches.only_in_source = data.mismatches.queries.only_in_source;
+                    currentQueries.mismatches.only_in_target = data.mismatches.queries.only_in_target;
+                    currentQueries.mismatches.different_values = data.mismatches.queries.different_values;
+                }
             } else {
                 document.getElementById('mismatchesCard').classList.add('d-none');
             }
@@ -494,6 +927,119 @@
 
         function hideError() {
             document.getElementById('errorAlert').classList.add('d-none');
+        }
+
+        // Store queries for copy functionality
+        let currentQueries = {
+            rowCount: { source: '', target: '' },
+            rowDiff: {
+                only_in_source: '',
+                only_in_target: '',
+                sample_only_in_source: '',
+                sample_only_in_target: ''
+            },
+            mismatches: {
+                only_in_source: '',
+                only_in_target: '',
+                different_values: ''
+            }
+        };
+
+        function copyToClipboard(text, buttonId) {
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = document.getElementById(buttonId);
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                alert('Failed to copy to clipboard');
+            });
+        }
+
+        function copyRowCountQueries() {
+            const query = `-- Source row count\n${currentQueries.rowCount.source}\n\n-- Target row count\n${currentQueries.rowCount.target}`;
+            copyToClipboard(query, 'copyRowCountQuery');
+        }
+
+        function copyRowDiffQuery(type) {
+            if (type === 'source') {
+                copyToClipboard(currentQueries.rowDiff.only_in_source, 'copyRowDiffSourceQuery');
+            } else {
+                copyToClipboard(currentQueries.rowDiff.only_in_target, 'copyRowDiffTargetQuery');
+            }
+        }
+
+        function copySampleQuery(type) {
+            if (type === 'source') {
+                copyToClipboard(currentQueries.rowDiff.sample_only_in_source, 'copySampleSourceQuery');
+            } else {
+                copyToClipboard(currentQueries.rowDiff.sample_only_in_target, 'copySampleTargetQuery');
+            }
+        }
+
+        function copyPkQuery(type) {
+            if (type === 'source') {
+                copyToClipboard(currentQueries.mismatches.only_in_source, 'copyPkSourceQuery');
+            } else if (type === 'target') {
+                copyToClipboard(currentQueries.mismatches.only_in_target, 'copyPkTargetQuery');
+            } else {
+                copyToClipboard(currentQueries.mismatches.different_values, 'copyPkDiffQuery');
+            }
+        }
+
+        // Schema filter state
+        const schemaFilters = {
+            'match': true,
+            'mismatch': true,
+            'only-in-table1': true,
+            'only-in-table2': true
+        };
+
+        function toggleSchemaFilter(filter) {
+            // Toggle filter state
+            schemaFilters[filter] = !schemaFilters[filter];
+
+            // Update legend item appearance
+            const legendItem = document.querySelector(`.legend-filter[data-filter="${filter}"]`);
+            if (schemaFilters[filter]) {
+                legendItem.classList.add('active');
+            } else {
+                legendItem.classList.remove('active');
+            }
+
+            // Apply filters to table rows
+            applySchemaFilters();
+        }
+
+        function applySchemaFilters() {
+            const rows = document.querySelectorAll('#schemaTable tr');
+            rows.forEach(row => {
+                const rowClass = row.className;
+                let show = false;
+
+                if (rowClass.includes('match') && !rowClass.includes('mismatch') && schemaFilters['match']) {
+                    show = true;
+                } else if (rowClass.includes('mismatch') && schemaFilters['mismatch']) {
+                    show = true;
+                } else if (rowClass.includes('only-in-table1') && schemaFilters['only-in-table1']) {
+                    show = true;
+                } else if (rowClass.includes('only-in-table2') && schemaFilters['only-in-table2']) {
+                    show = true;
+                }
+
+                row.style.display = show ? '' : 'none';
+            });
+        }
+
+        function resetSchemaFilters() {
+            // Reset all filters to active
+            Object.keys(schemaFilters).forEach(key => schemaFilters[key] = true);
+            document.querySelectorAll('.legend-filter').forEach(item => item.classList.add('active'));
         }
     </script>
 </body>

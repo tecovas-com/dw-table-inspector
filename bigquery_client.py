@@ -228,25 +228,39 @@ def get_table_schema(project_id, dataset_id, table_id):
         raise
 
 
-def get_row_count(project_id, dataset_id, table_id):
-    """Get the row count of a table."""
+def get_row_count(project_id, dataset_id, table_id, where_filter=None):
+    """Get the row count of a table by running an actual COUNT query."""
+    query = f"SELECT COUNT(*) as cnt FROM `{project_id}.{dataset_id}.{table_id}`"
+    if where_filter:
+        query += f" WHERE {where_filter}"
+
     entry = log_request('get_row_count', {
-        'project_id': project_id, 'dataset_id': dataset_id, 'table_id': table_id
-    })
+        'project_id': project_id, 'dataset_id': dataset_id, 'table_id': table_id,
+        'where_filter': where_filter
+    }, query=query)
     start = time.time()
 
     try:
         client = get_client()
-        table_ref = f"{project_id}.{dataset_id}.{table_id}"
-        table = client.get_table(table_ref)
-        log_response(entry, (time.time() - start) * 1000, rows=1)
-        return table.num_rows
+        job = client.query(query)
+        result = list(job.result())[0]
+        log_response(entry, (time.time() - start) * 1000,
+                    rows=1, bytes_processed=job.total_bytes_processed)
+        return result.cnt
     except Exception as e:
         log_response(entry, (time.time() - start) * 1000, error=e)
         raise
 
 
-def get_column_stats(project_id, dataset_id, table_id, columns):
+def get_row_count_query(project_id, dataset_id, table_id, where_filter=None):
+    """Return the SQL query for getting row count."""
+    query = f"SELECT COUNT(*) as row_count FROM `{project_id}.{dataset_id}.{table_id}`"
+    if where_filter:
+        query += f" WHERE {where_filter}"
+    return query
+
+
+def get_column_stats(project_id, dataset_id, table_id, columns, where_filter=None):
     """
     Get statistics for specified columns in a single query.
     Returns min, max, null count, and distinct count for each column.
@@ -276,10 +290,13 @@ def get_column_stats(project_id, dataset_id, table_id, columns):
             select_parts.append(f"NULL as `{col_name}_distinct`")
 
     query = f"SELECT\n    {',\n    '.join(select_parts)}\nFROM {table_ref}"
+    if where_filter:
+        query += f"\nWHERE {where_filter}"
 
     entry = log_request('get_column_stats', {
         'table': f"{project_id}.{dataset_id}.{table_id}",
-        'columns': [c['name'] for c in columns]
+        'columns': [c['name'] for c in columns],
+        'where_filter': where_filter
     }, query=query)
     start = time.time()
 
@@ -316,7 +333,7 @@ def get_column_stats(project_id, dataset_id, table_id, columns):
     return stats
 
 
-def find_row_differences(project1, dataset1, table1, project2, dataset2, table2, primary_key, limit=100):
+def find_row_differences(project1, dataset1, table1, project2, dataset2, table2, primary_key, limit=100, where_filter=None):
     """
     Find rows that exist in one table but not the other, or have different values.
     Returns sample of differing rows.
@@ -328,22 +345,49 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
     results = {
         'only_in_table1': [],
         'only_in_table2': [],
-        'different_values': []
+        'different_values': [],
+        'queries': {}
     }
 
+    # Handle multiple primary keys
+    pk_columns = [col.strip() for col in primary_key.split(',')]
+    
+    # Build JOIN condition for multiple primary keys
+    join_conditions = ' AND '.join([f"t1.`{col}` = t2.`{col}`" for col in pk_columns])
+    
+    # Build WHERE condition for NULL check (any key column being NULL means row doesn't exist)
+    where_null_condition = ' AND '.join([f"t2.`{col}` IS NULL" for col in pk_columns])
+
     # Find rows only in table 1
-    query_only_in_1 = f"""
-        SELECT t1.*
-        FROM {table1_ref} t1
-        LEFT JOIN {table2_ref} t2 ON t1.`{primary_key}` = t2.`{primary_key}`
-        WHERE t2.`{primary_key}` IS NULL
-        LIMIT {limit}
-    """
+    # Use CTEs to apply filter before JOIN to avoid ambiguous column references
+    if where_filter:
+        query_only_in_1 = f"""
+            WITH filtered_t1 AS (
+                SELECT * FROM {table1_ref} WHERE {where_filter}
+            ),
+            filtered_t2 AS (
+                SELECT * FROM {table2_ref} WHERE {where_filter}
+            )
+            SELECT t1.*
+            FROM filtered_t1 t1
+            LEFT JOIN filtered_t2 t2 ON {join_conditions}
+            WHERE {where_null_condition}
+            LIMIT {limit}
+        """
+    else:
+        query_only_in_1 = f"""
+            SELECT t1.*
+            FROM {table1_ref} t1
+            LEFT JOIN {table2_ref} t2 ON {join_conditions}
+            WHERE {where_null_condition}
+            LIMIT {limit}
+        """
 
     entry = log_request('find_row_differences:only_in_table1', {
         'table1': f"{project1}.{dataset1}.{table1}",
         'table2': f"{project2}.{dataset2}.{table2}",
-        'primary_key': primary_key
+        'primary_key': primary_key,
+        'where_filter': where_filter
     }, query=query_only_in_1.strip())
     start = time.time()
 
@@ -360,18 +404,36 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
         log_response(entry, (time.time() - start) * 1000, error=e)
 
     # Find rows only in table 2
-    query_only_in_2 = f"""
-        SELECT t2.*
-        FROM {table2_ref} t2
-        LEFT JOIN {table1_ref} t1 ON t2.`{primary_key}` = t1.`{primary_key}`
-        WHERE t1.`{primary_key}` IS NULL
-        LIMIT {limit}
-    """
+    where_null_condition_t1 = ' AND '.join([f"t1.`{col}` IS NULL" for col in pk_columns])
+    
+    if where_filter:
+        query_only_in_2 = f"""
+            WITH filtered_t1 AS (
+                SELECT * FROM {table1_ref} WHERE {where_filter}
+            ),
+            filtered_t2 AS (
+                SELECT * FROM {table2_ref} WHERE {where_filter}
+            )
+            SELECT t2.*
+            FROM filtered_t2 t2
+            LEFT JOIN filtered_t1 t1 ON {join_conditions}
+            WHERE {where_null_condition_t1}
+            LIMIT {limit}
+        """
+    else:
+        query_only_in_2 = f"""
+            SELECT t2.*
+            FROM {table2_ref} t2
+            LEFT JOIN {table1_ref} t1 ON {join_conditions}
+            WHERE {where_null_condition_t1}
+            LIMIT {limit}
+        """
 
     entry = log_request('find_row_differences:only_in_table2', {
         'table1': f"{project1}.{dataset1}.{table1}",
         'table2': f"{project2}.{dataset2}.{table2}",
-        'primary_key': primary_key
+        'primary_key': primary_key,
+        'where_filter': where_filter
     }, query=query_only_in_2.strip())
     start = time.time()
 
@@ -388,38 +450,104 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
         log_response(entry, (time.time() - start) * 1000, error=e)
 
     # Find rows with different values (using EXCEPT)
-    query_diff = f"""
-        WITH matched_keys AS (
-            SELECT t1.`{primary_key}` as pk
+    # Build SELECT list for primary key columns
+    pk_select_list = ', '.join([f"t1.`{col}`" for col in pk_columns])
+    pk_select_list_alias = ', '.join([f"`{col}`" for col in pk_columns])
+    
+    # Build WHERE IN condition for multiple primary keys
+    pk_where_conditions = ' AND '.join([f"t1.`{col}` = matched_keys.`{col}`" for col in pk_columns])
+    pk_where_conditions_t2 = ' AND '.join([f"t2.`{col}` = matched_keys.`{col}`" for col in pk_columns])
+    
+    # Build EXCEPT list (all primary key columns)
+    except_list = ', '.join([f"`{col}`" for col in pk_columns])
+    
+    # Build ORDER BY for primary keys
+    order_by_list = ', '.join([f"`{col}`" for col in pk_columns])
+    
+    if where_filter:
+        query_diff = f"""
+            WITH filtered_t1 AS (
+                SELECT * FROM {table1_ref} WHERE {where_filter}
+            ),
+            filtered_t2 AS (
+                SELECT * FROM {table2_ref} WHERE {where_filter}
+            ),
+            matched_keys AS (
+                SELECT {pk_select_list}
+                FROM filtered_t1 t1
+                INNER JOIN filtered_t2 t2 ON {join_conditions}
+            ),
+            t1_rows AS (
+                SELECT * FROM filtered_t1 t1 WHERE EXISTS (
+                    SELECT 1 FROM matched_keys WHERE {pk_where_conditions}
+                )
+            ),
+            t2_rows AS (
+                SELECT * FROM filtered_t2 t2 WHERE EXISTS (
+                    SELECT 1 FROM matched_keys WHERE {pk_where_conditions_t2}
+                )
+            ),
+            diff_keys AS (
+                SELECT {pk_select_list_alias} FROM t1_rows
+                EXCEPT DISTINCT
+                SELECT {pk_select_list_alias} FROM t2_rows
+            )
+            SELECT {pk_select_list}, 'table1' as source, t1.* EXCEPT({except_list})
+            FROM filtered_t1 t1
+            WHERE EXISTS (
+                SELECT 1 FROM diff_keys WHERE {pk_where_conditions}
+            )
+            UNION ALL
+            SELECT {pk_select_list}, 'table2' as source, t2.* EXCEPT({except_list})
+            FROM filtered_t2 t2
+            WHERE EXISTS (
+                SELECT 1 FROM diff_keys WHERE {pk_where_conditions_t2}
+            )
+            ORDER BY {order_by_list}, source
+            LIMIT {limit * 2}
+        """
+    else:
+        query_diff = f"""
+            WITH matched_keys AS (
+                SELECT {pk_select_list}
+                FROM {table1_ref} t1
+                INNER JOIN {table2_ref} t2 ON {join_conditions}
+            ),
+            t1_rows AS (
+                SELECT * FROM {table1_ref} t1 WHERE EXISTS (
+                    SELECT 1 FROM matched_keys WHERE {pk_where_conditions}
+                )
+            ),
+            t2_rows AS (
+                SELECT * FROM {table2_ref} t2 WHERE EXISTS (
+                    SELECT 1 FROM matched_keys WHERE {pk_where_conditions_t2}
+                )
+            ),
+            diff_keys AS (
+                SELECT {pk_select_list_alias} FROM t1_rows
+                EXCEPT DISTINCT
+                SELECT {pk_select_list_alias} FROM t2_rows
+            )
+            SELECT {pk_select_list}, 'table1' as source, t1.* EXCEPT({except_list})
             FROM {table1_ref} t1
-            INNER JOIN {table2_ref} t2 ON t1.`{primary_key}` = t2.`{primary_key}`
-        ),
-        t1_rows AS (
-            SELECT * FROM {table1_ref} WHERE `{primary_key}` IN (SELECT pk FROM matched_keys)
-        ),
-        t2_rows AS (
-            SELECT * FROM {table2_ref} WHERE `{primary_key}` IN (SELECT pk FROM matched_keys)
-        ),
-        diff_keys AS (
-            SELECT `{primary_key}` FROM t1_rows
-            EXCEPT DISTINCT
-            SELECT `{primary_key}` FROM t2_rows
-        )
-        SELECT t1.`{primary_key}`, 'table1' as source, t1.* EXCEPT(`{primary_key}`)
-        FROM {table1_ref} t1
-        WHERE t1.`{primary_key}` IN (SELECT `{primary_key}` FROM diff_keys)
-        UNION ALL
-        SELECT t2.`{primary_key}`, 'table2' as source, t2.* EXCEPT(`{primary_key}`)
-        FROM {table2_ref} t2
-        WHERE t2.`{primary_key}` IN (SELECT `{primary_key}` FROM diff_keys)
-        ORDER BY `{primary_key}`, source
-        LIMIT {limit * 2}
-    """
+            WHERE EXISTS (
+                SELECT 1 FROM diff_keys WHERE {pk_where_conditions}
+            )
+            UNION ALL
+            SELECT {pk_select_list}, 'table2' as source, t2.* EXCEPT({except_list})
+            FROM {table2_ref} t2
+            WHERE EXISTS (
+                SELECT 1 FROM diff_keys WHERE {pk_where_conditions_t2}
+            )
+            ORDER BY {order_by_list}, source
+            LIMIT {limit * 2}
+        """
 
     entry = log_request('find_row_differences:diff_values', {
         'table1': f"{project1}.{dataset1}.{table1}",
         'table2': f"{project2}.{dataset2}.{table2}",
-        'primary_key': primary_key
+        'primary_key': primary_key,
+        'where_filter': where_filter
     }, query=query_diff.strip())
     start = time.time()
 
@@ -434,5 +562,282 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
     except Exception as e:
         results['different_values_error'] = str(e)
         log_response(entry, (time.time() - start) * 1000, error=e)
+
+    # Add queries for user reference (cleaned up formatting)
+    if where_filter:
+        results['queries'] = {
+            'only_in_source': f"""-- Rows in Source but not in Target (by primary key: {primary_key})
+WITH filtered_t1 AS (
+    SELECT * FROM {table1_ref} WHERE {where_filter}
+),
+filtered_t2 AS (
+    SELECT * FROM {table2_ref} WHERE {where_filter}
+)
+SELECT t1.*
+FROM filtered_t1 t1
+LEFT JOIN filtered_t2 t2 ON {join_conditions}
+WHERE {where_null_condition}""",
+            'only_in_target': f"""-- Rows in Target but not in Source (by primary key: {primary_key})
+WITH filtered_t1 AS (
+    SELECT * FROM {table1_ref} WHERE {where_filter}
+),
+filtered_t2 AS (
+    SELECT * FROM {table2_ref} WHERE {where_filter}
+)
+SELECT t2.*
+FROM filtered_t2 t2
+LEFT JOIN filtered_t1 t1 ON {join_conditions}
+WHERE {where_null_condition_t1}""",
+            'different_values': f"""-- Rows with different values (by primary key: {primary_key})
+WITH filtered_t1 AS (
+    SELECT * FROM {table1_ref} WHERE {where_filter}
+),
+filtered_t2 AS (
+    SELECT * FROM {table2_ref} WHERE {where_filter}
+),
+matched_keys AS (
+    SELECT {pk_select_list}
+    FROM filtered_t1 t1
+    INNER JOIN filtered_t2 t2 ON {join_conditions}
+),
+t1_rows AS (
+    SELECT * FROM filtered_t1 t1 WHERE EXISTS (
+        SELECT 1 FROM matched_keys WHERE {pk_where_conditions}
+    )
+),
+t2_rows AS (
+    SELECT * FROM filtered_t2 t2 WHERE EXISTS (
+        SELECT 1 FROM matched_keys WHERE {pk_where_conditions_t2}
+    )
+),
+diff_keys AS (
+    SELECT {pk_select_list_alias} FROM t1_rows
+    EXCEPT DISTINCT
+    SELECT {pk_select_list_alias} FROM t2_rows
+)
+SELECT {pk_select_list}, 'table1' as source, t1.* EXCEPT({except_list})
+FROM filtered_t1 t1
+WHERE EXISTS (
+    SELECT 1 FROM diff_keys WHERE {pk_where_conditions}
+)
+UNION ALL
+SELECT {pk_select_list}, 'table2' as source, t2.* EXCEPT({except_list})
+FROM filtered_t2 t2
+WHERE EXISTS (
+    SELECT 1 FROM diff_keys WHERE {pk_where_conditions_t2}
+)
+ORDER BY {order_by_list}, source"""
+        }
+    else:
+        results['queries'] = {
+            'only_in_source': f"""-- Rows in Source but not in Target (by primary key: {primary_key})
+SELECT t1.*
+FROM {table1_ref} t1
+LEFT JOIN {table2_ref} t2 ON {join_conditions}
+WHERE {where_null_condition}""",
+            'only_in_target': f"""-- Rows in Target but not in Source (by primary key: {primary_key})
+SELECT t2.*
+FROM {table2_ref} t2
+LEFT JOIN {table1_ref} t1 ON {join_conditions}
+WHERE {where_null_condition_t1}""",
+            'different_values': f"""-- Rows with different values (by primary key: {primary_key})
+WITH matched_keys AS (
+    SELECT {pk_select_list}
+    FROM {table1_ref} t1
+    INNER JOIN {table2_ref} t2 ON {join_conditions}
+),
+t1_rows AS (
+    SELECT * FROM {table1_ref} t1 WHERE EXISTS (
+        SELECT 1 FROM matched_keys WHERE {pk_where_conditions}
+    )
+),
+t2_rows AS (
+    SELECT * FROM {table2_ref} t2 WHERE EXISTS (
+        SELECT 1 FROM matched_keys WHERE {pk_where_conditions_t2}
+    )
+),
+diff_keys AS (
+    SELECT {pk_select_list_alias} FROM t1_rows
+    EXCEPT DISTINCT
+    SELECT {pk_select_list_alias} FROM t2_rows
+)
+SELECT {pk_select_list}, 'table1' as source, t1.* EXCEPT({except_list})
+FROM {table1_ref} t1
+WHERE EXISTS (
+    SELECT 1 FROM diff_keys WHERE {pk_where_conditions}
+)
+UNION ALL
+SELECT {pk_select_list}, 'table2' as source, t2.* EXCEPT({except_list})
+FROM {table2_ref} t2
+WHERE EXISTS (
+    SELECT 1 FROM diff_keys WHERE {pk_where_conditions_t2}
+)
+ORDER BY {order_by_list}, source"""
+        }
+
+    return results
+
+
+def find_row_differences_no_pk(project1, dataset1, table1, project2, dataset2, table2, common_columns, sample_limit=10, where_filter=None):
+    """
+    Find rows that exist in one table but not the other using EXCEPT DISTINCT.
+    Use this when no primary key is available - compares entire rows.
+    Only compares columns that exist in both tables.
+    Returns counts and sample rows.
+    """
+    client = get_client()
+    table1_ref = f"`{project1}.{dataset1}.{table1}`"
+    table2_ref = f"`{project2}.{dataset2}.{table2}`"
+
+    # Build column list for SELECT (only shared columns)
+    columns_sql = ", ".join([f"`{col}`" for col in common_columns])
+    
+    # Build WHERE clause if filter provided
+    where_clause = f" WHERE {where_filter}" if where_filter else ""
+
+    results = {
+        'only_in_source_count': 0,
+        'only_in_target_count': 0,
+        'only_in_source_sample': [],
+        'only_in_target_sample': [],
+        'queries': {},
+        'common_columns_count': len(common_columns)
+    }
+
+    # Count rows in source but not in target
+    query_count_source = f"""
+        SELECT COUNT(*) as cnt FROM (
+            SELECT {columns_sql} FROM {table1_ref}{where_clause}
+            EXCEPT DISTINCT
+            SELECT {columns_sql} FROM {table2_ref}{where_clause}
+        )
+    """
+
+    entry = log_request('find_row_differences_no_pk:count_only_in_source', {
+        'table1': f"{project1}.{dataset1}.{table1}",
+        'table2': f"{project2}.{dataset2}.{table2}",
+        'where_filter': where_filter
+    }, query=query_count_source.strip())
+    start = time.time()
+
+    try:
+        job = client.query(query_count_source)
+        row = list(job.result())[0]
+        results['only_in_source_count'] = row.cnt
+        log_response(entry, (time.time() - start) * 1000,
+                    rows=1, bytes_processed=job.total_bytes_processed)
+    except Exception as e:
+        results['only_in_source_error'] = str(e)
+        log_response(entry, (time.time() - start) * 1000, error=e)
+
+    # Count rows in target but not in source
+    query_count_target = f"""
+        SELECT COUNT(*) as cnt FROM (
+            SELECT {columns_sql} FROM {table2_ref}{where_clause}
+            EXCEPT DISTINCT
+            SELECT {columns_sql} FROM {table1_ref}{where_clause}
+        )
+    """
+
+    entry = log_request('find_row_differences_no_pk:count_only_in_target', {
+        'table1': f"{project1}.{dataset1}.{table1}",
+        'table2': f"{project2}.{dataset2}.{table2}",
+        'where_filter': where_filter
+    }, query=query_count_target.strip())
+    start = time.time()
+
+    try:
+        job = client.query(query_count_target)
+        row = list(job.result())[0]
+        results['only_in_target_count'] = row.cnt
+        log_response(entry, (time.time() - start) * 1000,
+                    rows=1, bytes_processed=job.total_bytes_processed)
+    except Exception as e:
+        results['only_in_target_error'] = str(e)
+        log_response(entry, (time.time() - start) * 1000, error=e)
+
+    # Sample rows only in source
+    query_sample_source = f"""
+        SELECT {columns_sql} FROM {table1_ref}{where_clause}
+        EXCEPT DISTINCT
+        SELECT {columns_sql} FROM {table2_ref}{where_clause}
+        LIMIT {sample_limit}
+    """
+
+    entry = log_request('find_row_differences_no_pk:sample_only_in_source', {
+        'table1': f"{project1}.{dataset1}.{table1}",
+        'table2': f"{project2}.{dataset2}.{table2}",
+        'limit': sample_limit,
+        'where_filter': where_filter
+    }, query=query_sample_source.strip())
+    start = time.time()
+
+    try:
+        job = client.query(query_sample_source)
+        for row in job.result():
+            results['only_in_source_sample'].append(dict(row))
+        log_response(entry, (time.time() - start) * 1000,
+                    rows=len(results['only_in_source_sample']),
+                    bytes_processed=job.total_bytes_processed)
+    except Exception as e:
+        results['only_in_source_sample_error'] = str(e)
+        log_response(entry, (time.time() - start) * 1000, error=e)
+
+    # Sample rows only in target
+    query_sample_target = f"""
+        SELECT {columns_sql} FROM {table2_ref}{where_clause}
+        EXCEPT DISTINCT
+        SELECT {columns_sql} FROM {table1_ref}{where_clause}
+        LIMIT {sample_limit}
+    """
+
+    entry = log_request('find_row_differences_no_pk:sample_only_in_target', {
+        'table1': f"{project1}.{dataset1}.{table1}",
+        'table2': f"{project2}.{dataset2}.{table2}",
+        'limit': sample_limit,
+        'where_filter': where_filter
+    }, query=query_sample_target.strip())
+    start = time.time()
+
+    try:
+        job = client.query(query_sample_target)
+        for row in job.result():
+            results['only_in_target_sample'].append(dict(row))
+        log_response(entry, (time.time() - start) * 1000,
+                    rows=len(results['only_in_target_sample']),
+                    bytes_processed=job.total_bytes_processed)
+    except Exception as e:
+        results['only_in_target_sample_error'] = str(e)
+        log_response(entry, (time.time() - start) * 1000, error=e)
+
+    # Add queries for user reference (cleaned up formatting)
+    results['queries'] = {
+        'only_in_source': f"""-- Rows in Source but not in Target (comparing {len(common_columns)} shared columns)
+SELECT {columns_sql}
+FROM {table1_ref}{where_clause}
+EXCEPT DISTINCT
+SELECT {columns_sql}
+FROM {table2_ref}{where_clause}""",
+        'only_in_target': f"""-- Rows in Target but not in Source (comparing {len(common_columns)} shared columns)
+SELECT {columns_sql}
+FROM {table2_ref}{where_clause}
+EXCEPT DISTINCT
+SELECT {columns_sql}
+FROM {table1_ref}{where_clause}""",
+        'sample_only_in_source': f"""-- Sample rows in Source but not in Target (comparing {len(common_columns)} shared columns)
+SELECT {columns_sql}
+FROM {table1_ref}{where_clause}
+EXCEPT DISTINCT
+SELECT {columns_sql}
+FROM {table2_ref}{where_clause}
+LIMIT {sample_limit}""",
+        'sample_only_in_target': f"""-- Sample rows in Target but not in Source (comparing {len(common_columns)} shared columns)
+SELECT {columns_sql}
+FROM {table2_ref}{where_clause}
+EXCEPT DISTINCT
+SELECT {columns_sql}
+FROM {table1_ref}{where_clause}
+LIMIT {sample_limit}"""
+    }
 
     return results
