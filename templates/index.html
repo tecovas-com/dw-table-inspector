@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BigQuery Table Inspector</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .match { background-color: #d4edda !important; }
+        .mismatch { background-color: #f8d7da !important; }
+        .only-in-table1 { background-color: #fff3cd !important; }
+        .only-in-table2 { background-color: #cce5ff !important; }
+        .status-badge { font-size: 1.2rem; }
+        .loading { display: none; }
+        .results-section { display: none; }
+        .table-responsive { max-height: 500px; overflow-y: auto; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 4px; max-height: 300px; overflow: auto; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid py-4">
+        <h1 class="mb-4">BigQuery Table Inspector</h1>
+        <p class="text-muted mb-4">Compare two BigQuery tables across different projects to verify schema, row counts, and data integrity.</p>
+
+        <!-- Table Selection -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Select Tables to Compare</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <!-- Table A -->
+                    <div class="col-md-5">
+                        <h6>Source</h6>
+                        <div class="mb-3">
+                            <label class="form-label">Project</label>
+                            <select id="project1" class="form-select">
+                                <option value="">Select project...</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Dataset</label>
+                            <input type="text" id="dataset1" class="form-control" list="dataset1-list" placeholder="Type to filter..." autocomplete="off">
+                            <datalist id="dataset1-list"></datalist>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Table</label>
+                            <input type="text" id="table1" class="form-control" list="table1-list" placeholder="Type to filter..." autocomplete="off">
+                            <datalist id="table1-list"></datalist>
+                        </div>
+                    </div>
+
+                    <div class="col-md-2 d-flex align-items-center justify-content-center">
+                        <span class="fs-1 text-muted">vs</span>
+                    </div>
+
+                    <!-- Table B -->
+                    <div class="col-md-5">
+                        <h6>Target</h6>
+                        <div class="mb-3">
+                            <label class="form-label">Project</label>
+                            <select id="project2" class="form-select">
+                                <option value="">Select project...</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Dataset</label>
+                            <input type="text" id="dataset2" class="form-control" list="dataset2-list" placeholder="Type to filter..." autocomplete="off">
+                            <datalist id="dataset2-list"></datalist>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Table</label>
+                            <input type="text" id="table2" class="form-control" list="table2-list" placeholder="Type to filter..." autocomplete="off">
+                            <datalist id="table2-list"></datalist>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Primary Key -->
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Primary Key Column (optional, for row-level comparison)</label>
+                        <input type="text" id="primaryKey" class="form-control" placeholder="e.g., id, transaction_id">
+                    </div>
+                </div>
+
+                <!-- Compare Button -->
+                <div class="mt-4">
+                    <button id="compareBtn" class="btn btn-primary btn-lg" onclick="runComparison()">
+                        Compare Tables
+                    </button>
+                    <span id="loading" class="loading ms-3">
+                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                        <span class="ms-2">Comparing...</span>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Alert -->
+        <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+
+        <!-- Results Section -->
+        <div id="resultsSection" class="results-section">
+            <!-- Overall Status -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Overall Comparison Result</h5>
+                </div>
+                <div class="card-body">
+                    <div id="overallStatus" class="text-center py-3">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Schema Comparison -->
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Schema Comparison</h5>
+                    <span id="schemaStatus" class="badge"></span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Column</th>
+                                    <th>Table A Type</th>
+                                    <th>Table A Mode</th>
+                                    <th>Table B Type</th>
+                                    <th>Table B Mode</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="schemaTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row Count Comparison -->
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Row Count Comparison</h5>
+                    <span id="rowCountStatus" class="badge"></span>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-4">
+                            <h6>Table A</h6>
+                            <p id="rowCount1" class="fs-3 fw-bold">-</p>
+                        </div>
+                        <div class="col-md-4">
+                            <h6>Difference</h6>
+                            <p id="rowCountDiff" class="fs-3 fw-bold">-</p>
+                        </div>
+                        <div class="col-md-4">
+                            <h6>Table B</h6>
+                            <p id="rowCount2" class="fs-3 fw-bold">-</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Column Statistics -->
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Column Statistics</h5>
+                    <span id="statsStatus" class="badge"></span>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th rowspan="2">Column</th>
+                                    <th colspan="4" class="text-center">Table A</th>
+                                    <th colspan="4" class="text-center">Table B</th>
+                                    <th rowspan="2">Match</th>
+                                </tr>
+                                <tr>
+                                    <th>Min</th>
+                                    <th>Max</th>
+                                    <th>Nulls</th>
+                                    <th>Distinct</th>
+                                    <th>Min</th>
+                                    <th>Max</th>
+                                    <th>Nulls</th>
+                                    <th>Distinct</th>
+                                </tr>
+                            </thead>
+                            <tbody id="statsTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row Mismatches -->
+            <div id="mismatchesCard" class="card mb-4 d-none">
+                <div class="card-header">
+                    <h5 class="mb-0">Sample Row Differences</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-4">
+                        <h6>Rows only in Table A (<span id="onlyIn1Count">0</span>)</h6>
+                        <pre id="onlyIn1"></pre>
+                    </div>
+                    <div class="mb-4">
+                        <h6>Rows only in Table B (<span id="onlyIn2Count">0</span>)</h6>
+                        <pre id="onlyIn2"></pre>
+                    </div>
+                    <div>
+                        <h6>Rows with different values (<span id="diffCount">0</span>)</h6>
+                        <pre id="diffRows"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Cache for loaded data (to avoid repeat API calls)
+        const cache = {
+            datasets: {},  // { "project-name": ["dataset1", "dataset2", ...] }
+            tables: {}     // { "project.dataset": ["table1", "table2", ...] }
+        };
+
+        // Update datalist with options
+        function updateDatalist(datalistId, options) {
+            const datalist = document.getElementById(datalistId);
+            datalist.innerHTML = options.map(opt => `<option value="${opt}">`).join('');
+        }
+
+        // Load projects on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadProjects();
+
+            // Project change -> load datasets (ONE API call, then cached)
+            document.getElementById('project1').addEventListener('change', () => loadDatasets(1));
+            document.getElementById('project2').addEventListener('change', () => loadDatasets(2));
+
+            // Dataset selected -> load tables (ONE API call, then cached)
+            // Use 'change' event which fires when user selects from datalist
+            document.getElementById('dataset1').addEventListener('change', () => loadTables(1));
+            document.getElementById('dataset2').addEventListener('change', () => loadTables(2));
+        });
+
+        async function loadProjects() {
+            try {
+                const response = await fetch('/api/projects');
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                if (data.projects.length === 0) {
+                    showError('No projects configured. Please set GCP_PROJECTS in your .env file (e.g., GCP_PROJECTS=tecovas-staging,tecovas-development)');
+                    return;
+                }
+
+                // Populate project dropdowns
+                const options = data.projects.map(p => `<option value="${p}">${p}</option>`).join('');
+                document.getElementById('project1').innerHTML = '<option value="">Select project...</option>' + options;
+                document.getElementById('project2').innerHTML = '<option value="">Select project...</option>' + options;
+            } catch (e) {
+                showError('Failed to load projects: ' + e.message);
+            }
+        }
+
+        async function loadDatasets(tableNum) {
+            const project = document.getElementById(`project${tableNum}`).value;
+            const datasetInput = document.getElementById(`dataset${tableNum}`);
+            const tableInput = document.getElementById(`table${tableNum}`);
+
+            // Clear downstream fields
+            datasetInput.value = '';
+            tableInput.value = '';
+            updateDatalist(`dataset${tableNum}-list`, []);
+            updateDatalist(`table${tableNum}-list`, []);
+
+            if (!project) return;
+
+            // Check cache first
+            if (cache.datasets[project]) {
+                updateDatalist(`dataset${tableNum}-list`, cache.datasets[project]);
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/datasets/${project}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                // Cache the result
+                cache.datasets[project] = data.datasets;
+                updateDatalist(`dataset${tableNum}-list`, data.datasets);
+            } catch (e) {
+                showError('Failed to load datasets: ' + e.message);
+            }
+        }
+
+        async function loadTables(tableNum) {
+            const project = document.getElementById(`project${tableNum}`).value;
+            const dataset = document.getElementById(`dataset${tableNum}`).value;
+            const tableInput = document.getElementById(`table${tableNum}`);
+
+            // Clear table field
+            tableInput.value = '';
+            updateDatalist(`table${tableNum}-list`, []);
+
+            if (!project || !dataset) return;
+
+            const cacheKey = `${project}.${dataset}`;
+
+            // Check cache first
+            if (cache.tables[cacheKey]) {
+                updateDatalist(`table${tableNum}-list`, cache.tables[cacheKey]);
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/tables/${project}/${dataset}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                // Cache the result
+                cache.tables[cacheKey] = data.tables;
+                updateDatalist(`table${tableNum}-list`, data.tables);
+            } catch (e) {
+                showError('Failed to load tables: ' + e.message);
+            }
+        }
+
+        async function runComparison() {
+            const project1 = document.getElementById('project1').value;
+            const dataset1 = document.getElementById('dataset1').value;
+            const table1 = document.getElementById('table1').value;
+            const project2 = document.getElementById('project2').value;
+            const dataset2 = document.getElementById('dataset2').value;
+            const table2 = document.getElementById('table2').value;
+            const primaryKey = document.getElementById('primaryKey').value;
+
+            if (!project1 || !dataset1 || !table1 || !project2 || !dataset2 || !table2) {
+                showError('Please select both tables to compare.');
+                return;
+            }
+
+            // Show loading
+            document.getElementById('loading').style.display = 'inline';
+            document.getElementById('compareBtn').disabled = true;
+            document.getElementById('resultsSection').style.display = 'none';
+            hideError();
+
+            try {
+                const response = await fetch('/api/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        project1, dataset1, table1,
+                        project2, dataset2, table2,
+                        primary_key: primaryKey || null
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                displayResults(data);
+            } catch (e) {
+                showError('Comparison failed: ' + e.message);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('compareBtn').disabled = false;
+            }
+        }
+
+        function displayResults(data) {
+            document.getElementById('resultsSection').style.display = 'block';
+
+            // Overall status
+            const overallEl = document.getElementById('overallStatus');
+            if (data.overall_match) {
+                overallEl.innerHTML = '<span class="badge bg-success status-badge">TABLES MATCH</span>';
+            } else {
+                overallEl.innerHTML = '<span class="badge bg-danger status-badge">DIFFERENCES FOUND</span>';
+            }
+
+            // Schema comparison
+            const schemaStatus = document.getElementById('schemaStatus');
+            schemaStatus.textContent = data.schema.match ? 'MATCH' : 'MISMATCH';
+            schemaStatus.className = 'badge ' + (data.schema.match ? 'bg-success' : 'bg-danger');
+
+            const schemaTable = document.getElementById('schemaTable');
+            schemaTable.innerHTML = data.schema.details.map(col => {
+                let rowClass = '';
+                let statusText = '';
+                if (col.status === 'match') {
+                    rowClass = 'match';
+                    statusText = 'Match';
+                } else if (col.status === 'mismatch') {
+                    rowClass = 'mismatch';
+                    statusText = 'Type/Mode differs';
+                } else if (col.status === 'only_in_table1') {
+                    rowClass = 'only-in-table1';
+                    statusText = 'Only in Table A';
+                } else if (col.status === 'only_in_table2') {
+                    rowClass = 'only-in-table2';
+                    statusText = 'Only in Table B';
+                }
+                return `<tr class="${rowClass}">
+                    <td>${col.column}</td>
+                    <td>${col.table1_type || '-'}</td>
+                    <td>${col.table1_mode || '-'}</td>
+                    <td>${col.table2_type || '-'}</td>
+                    <td>${col.table2_mode || '-'}</td>
+                    <td>${statusText}</td>
+                </tr>`;
+            }).join('');
+
+            // Row counts
+            const rowCountStatus = document.getElementById('rowCountStatus');
+            rowCountStatus.textContent = data.row_counts.match ? 'MATCH' : 'MISMATCH';
+            rowCountStatus.className = 'badge ' + (data.row_counts.match ? 'bg-success' : 'bg-danger');
+
+            document.getElementById('rowCount1').textContent = data.row_counts.table1_count.toLocaleString();
+            document.getElementById('rowCount2').textContent = data.row_counts.table2_count.toLocaleString();
+            document.getElementById('rowCountDiff').textContent = data.row_counts.difference.toLocaleString();
+
+            // Column stats
+            const statsStatus = document.getElementById('statsStatus');
+            statsStatus.textContent = data.column_stats.match ? 'MATCH' : 'MISMATCH';
+            statsStatus.className = 'badge ' + (data.column_stats.match ? 'bg-success' : 'bg-danger');
+
+            const statsTable = document.getElementById('statsTable');
+            statsTable.innerHTML = data.column_stats.details.map(col => {
+                const rowClass = col.match ? 'match' : 'mismatch';
+                return `<tr class="${rowClass}">
+                    <td>${col.column}</td>
+                    <td>${col.table1_min ?? '-'}</td>
+                    <td>${col.table1_max ?? '-'}</td>
+                    <td>${col.table1_nulls?.toLocaleString() ?? '-'}</td>
+                    <td>${col.table1_distinct?.toLocaleString() ?? '-'}</td>
+                    <td>${col.table2_min ?? '-'}</td>
+                    <td>${col.table2_max ?? '-'}</td>
+                    <td>${col.table2_nulls?.toLocaleString() ?? '-'}</td>
+                    <td>${col.table2_distinct?.toLocaleString() ?? '-'}</td>
+                    <td>${col.match ? 'Yes' : 'No'}</td>
+                </tr>`;
+            }).join('');
+
+            // Mismatches
+            if (data.mismatches) {
+                document.getElementById('mismatchesCard').classList.remove('d-none');
+
+                const onlyIn1 = data.mismatches.only_in_table1 || [];
+                const onlyIn2 = data.mismatches.only_in_table2 || [];
+                const diffRows = data.mismatches.different_values || [];
+
+                document.getElementById('onlyIn1Count').textContent = onlyIn1.length;
+                document.getElementById('onlyIn2Count').textContent = onlyIn2.length;
+                document.getElementById('diffCount').textContent = diffRows.length;
+
+                document.getElementById('onlyIn1').textContent = onlyIn1.length > 0 ? JSON.stringify(onlyIn1, null, 2) : 'None';
+                document.getElementById('onlyIn2').textContent = onlyIn2.length > 0 ? JSON.stringify(onlyIn2, null, 2) : 'None';
+                document.getElementById('diffRows').textContent = diffRows.length > 0 ? JSON.stringify(diffRows, null, 2) : 'None';
+            } else {
+                document.getElementById('mismatchesCard').classList.add('d-none');
+            }
+        }
+
+        function showError(message) {
+            const alert = document.getElementById('errorAlert');
+            alert.textContent = message;
+            alert.classList.remove('d-none');
+        }
+
+        function hideError() {
+            document.getElementById('errorAlert').classList.add('d-none');
+        }
+    </script>
+</body>
+</html>
