@@ -355,8 +355,9 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
     # Build JOIN condition for multiple primary keys
     join_conditions = ' AND '.join([f"t1.`{col}` = t2.`{col}`" for col in pk_columns])
     
-    # Build WHERE condition for NULL check (any key column being NULL means row doesn't exist)
-    where_null_condition = ' AND '.join([f"t2.`{col}` IS NULL" for col in pk_columns])
+    # Function to generate WHERE condition for NULL check (any key column being NULL means row doesn't exist)
+    def where_null_condition(alias):
+        return ' OR '.join([f"{alias}.`{col}` IS NULL" for col in pk_columns])
 
     # Find rows only in table 1
     # Use CTEs to apply filter before JOIN to avoid ambiguous column references
@@ -371,7 +372,7 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             SELECT t1.*
             FROM filtered_t1 t1
             LEFT JOIN filtered_t2 t2 ON {join_conditions}
-            WHERE {where_null_condition}
+            WHERE {where_null_condition('t2')}
             LIMIT {limit}
         """
     else:
@@ -379,7 +380,7 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             SELECT t1.*
             FROM {table1_ref} t1
             LEFT JOIN {table2_ref} t2 ON {join_conditions}
-            WHERE {where_null_condition}
+            WHERE {where_null_condition('t2')}
             LIMIT {limit}
         """
 
@@ -404,8 +405,6 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
         log_response(entry, (time.time() - start) * 1000, error=e)
 
     # Find rows only in table 2
-    where_null_condition_t1 = ' AND '.join([f"t1.`{col}` IS NULL" for col in pk_columns])
-    
     if where_filter:
         query_only_in_2 = f"""
             WITH filtered_t1 AS (
@@ -417,7 +416,7 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             SELECT t2.*
             FROM filtered_t2 t2
             LEFT JOIN filtered_t1 t1 ON {join_conditions}
-            WHERE {where_null_condition_t1}
+            WHERE {where_null_condition('t1')}
             LIMIT {limit}
         """
     else:
@@ -425,7 +424,7 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             SELECT t2.*
             FROM {table2_ref} t2
             LEFT JOIN {table1_ref} t1 ON {join_conditions}
-            WHERE {where_null_condition_t1}
+            WHERE {where_null_condition('t1')}
             LIMIT {limit}
         """
 
@@ -454,9 +453,10 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
     pk_select_list = ', '.join([f"t1.`{col}`" for col in pk_columns])
     pk_select_list_alias = ', '.join([f"`{col}`" for col in pk_columns])
     
-    # Build WHERE IN condition for multiple primary keys
-    pk_where_conditions = ' AND '.join([f"t1.`{col}` = matched_keys.`{col}`" for col in pk_columns])
-    pk_where_conditions_t2 = ' AND '.join([f"t2.`{col}` = matched_keys.`{col}`" for col in pk_columns])
+    # Build WHERE condition for matching primary keys in EXISTS clauses
+    # Note: The table alias (t1/t2) in the condition will match the outer query's alias
+    def pk_where_condition(alias):
+        return ' AND '.join([f"{alias}.`{col}` = matched_keys.`{col}`" for col in pk_columns])
     
     # Build EXCEPT list (all primary key columns)
     except_list = ', '.join([f"`{col}`" for col in pk_columns])
@@ -479,12 +479,12 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             ),
             t1_rows AS (
                 SELECT * FROM filtered_t1 t1 WHERE EXISTS (
-                    SELECT 1 FROM matched_keys WHERE {pk_where_conditions}
+                    SELECT 1 FROM matched_keys WHERE {pk_where_condition('t1')}
                 )
             ),
             t2_rows AS (
                 SELECT * FROM filtered_t2 t2 WHERE EXISTS (
-                    SELECT 1 FROM matched_keys WHERE {pk_where_conditions_t2}
+                    SELECT 1 FROM matched_keys WHERE {pk_where_condition('t2')}
                 )
             ),
             diff_keys AS (
@@ -495,13 +495,13 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             SELECT {pk_select_list}, 'table1' as source, t1.* EXCEPT({except_list})
             FROM filtered_t1 t1
             WHERE EXISTS (
-                SELECT 1 FROM diff_keys WHERE {pk_where_conditions}
+                SELECT 1 FROM diff_keys WHERE {pk_where_condition('t1')}
             )
             UNION ALL
             SELECT {pk_select_list}, 'table2' as source, t2.* EXCEPT({except_list})
             FROM filtered_t2 t2
             WHERE EXISTS (
-                SELECT 1 FROM diff_keys WHERE {pk_where_conditions_t2}
+                SELECT 1 FROM diff_keys WHERE {pk_where_condition('t2')}
             )
             ORDER BY {order_by_list}, source
             LIMIT {limit * 2}
@@ -515,12 +515,12 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             ),
             t1_rows AS (
                 SELECT * FROM {table1_ref} t1 WHERE EXISTS (
-                    SELECT 1 FROM matched_keys WHERE {pk_where_conditions}
+                    SELECT 1 FROM matched_keys WHERE {pk_where_condition('t1')}
                 )
             ),
             t2_rows AS (
                 SELECT * FROM {table2_ref} t2 WHERE EXISTS (
-                    SELECT 1 FROM matched_keys WHERE {pk_where_conditions_t2}
+                    SELECT 1 FROM matched_keys WHERE {pk_where_condition('t2')}
                 )
             ),
             diff_keys AS (
@@ -531,13 +531,13 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             SELECT {pk_select_list}, 'table1' as source, t1.* EXCEPT({except_list})
             FROM {table1_ref} t1
             WHERE EXISTS (
-                SELECT 1 FROM diff_keys WHERE {pk_where_conditions}
+                SELECT 1 FROM diff_keys WHERE {pk_where_condition('t1')}
             )
             UNION ALL
             SELECT {pk_select_list}, 'table2' as source, t2.* EXCEPT({except_list})
             FROM {table2_ref} t2
             WHERE EXISTS (
-                SELECT 1 FROM diff_keys WHERE {pk_where_conditions_t2}
+                SELECT 1 FROM diff_keys WHERE {pk_where_condition('t2')}
             )
             ORDER BY {order_by_list}, source
             LIMIT {limit * 2}
@@ -576,7 +576,7 @@ filtered_t2 AS (
 SELECT t1.*
 FROM filtered_t1 t1
 LEFT JOIN filtered_t2 t2 ON {join_conditions}
-WHERE {where_null_condition}""",
+WHERE {where_null_condition('t2')}""",
             'only_in_target': f"""-- Rows in Target but not in Source (by primary key: {primary_key})
 WITH filtered_t1 AS (
     SELECT * FROM {table1_ref} WHERE {where_filter}
@@ -587,7 +587,7 @@ filtered_t2 AS (
 SELECT t2.*
 FROM filtered_t2 t2
 LEFT JOIN filtered_t1 t1 ON {join_conditions}
-WHERE {where_null_condition_t1}""",
+WHERE {where_null_condition('t1')}""",
             'different_values': f"""-- Rows with different values (by primary key: {primary_key})
 WITH filtered_t1 AS (
     SELECT * FROM {table1_ref} WHERE {where_filter}
@@ -602,12 +602,12 @@ matched_keys AS (
 ),
 t1_rows AS (
     SELECT * FROM filtered_t1 t1 WHERE EXISTS (
-        SELECT 1 FROM matched_keys WHERE {pk_where_conditions}
+        SELECT 1 FROM matched_keys WHERE {pk_where_condition('t1')}
     )
 ),
 t2_rows AS (
     SELECT * FROM filtered_t2 t2 WHERE EXISTS (
-        SELECT 1 FROM matched_keys WHERE {pk_where_conditions_t2}
+        SELECT 1 FROM matched_keys WHERE {pk_where_condition('t2')}
     )
 ),
 diff_keys AS (
@@ -618,13 +618,13 @@ diff_keys AS (
 SELECT {pk_select_list}, 'table1' as source, t1.* EXCEPT({except_list})
 FROM filtered_t1 t1
 WHERE EXISTS (
-    SELECT 1 FROM diff_keys WHERE {pk_where_conditions}
+    SELECT 1 FROM diff_keys WHERE {pk_where_condition('t1')}
 )
 UNION ALL
 SELECT {pk_select_list}, 'table2' as source, t2.* EXCEPT({except_list})
 FROM filtered_t2 t2
 WHERE EXISTS (
-    SELECT 1 FROM diff_keys WHERE {pk_where_conditions_t2}
+    SELECT 1 FROM diff_keys WHERE {pk_where_condition('t2')}
 )
 ORDER BY {order_by_list}, source"""
         }
@@ -634,12 +634,12 @@ ORDER BY {order_by_list}, source"""
 SELECT t1.*
 FROM {table1_ref} t1
 LEFT JOIN {table2_ref} t2 ON {join_conditions}
-WHERE {where_null_condition}""",
+WHERE {where_null_condition('t2')}""",
             'only_in_target': f"""-- Rows in Target but not in Source (by primary key: {primary_key})
 SELECT t2.*
 FROM {table2_ref} t2
 LEFT JOIN {table1_ref} t1 ON {join_conditions}
-WHERE {where_null_condition_t1}""",
+WHERE {where_null_condition('t1')}""",
             'different_values': f"""-- Rows with different values (by primary key: {primary_key})
 WITH matched_keys AS (
     SELECT {pk_select_list}
@@ -648,12 +648,12 @@ WITH matched_keys AS (
 ),
 t1_rows AS (
     SELECT * FROM {table1_ref} t1 WHERE EXISTS (
-        SELECT 1 FROM matched_keys WHERE {pk_where_conditions}
+        SELECT 1 FROM matched_keys WHERE {pk_where_condition('t1')}
     )
 ),
 t2_rows AS (
     SELECT * FROM {table2_ref} t2 WHERE EXISTS (
-        SELECT 1 FROM matched_keys WHERE {pk_where_conditions_t2}
+        SELECT 1 FROM matched_keys WHERE {pk_where_condition('t2')}
     )
 ),
 diff_keys AS (
@@ -664,13 +664,13 @@ diff_keys AS (
 SELECT {pk_select_list}, 'table1' as source, t1.* EXCEPT({except_list})
 FROM {table1_ref} t1
 WHERE EXISTS (
-    SELECT 1 FROM diff_keys WHERE {pk_where_conditions}
+    SELECT 1 FROM diff_keys WHERE {pk_where_condition('t1')}
 )
 UNION ALL
 SELECT {pk_select_list}, 'table2' as source, t2.* EXCEPT({except_list})
 FROM {table2_ref} t2
 WHERE EXISTS (
-    SELECT 1 FROM diff_keys WHERE {pk_where_conditions_t2}
+    SELECT 1 FROM diff_keys WHERE {pk_where_condition('t2')}
 )
 ORDER BY {order_by_list}, source"""
         }
