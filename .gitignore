@@ -35,3 +35,8 @@ instance/
 
 # Logs
 *.log
+logs/
+
+# Test output
+tests/test_output/
+.pytest_cache/
