@@ -1,5 +1,8 @@
 import bigquery_client as bq
 
+# Columns to exclude from comparisons (Fivetran metadata columns)
+EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced'}
+
 
 def compare_schemas(project1, dataset1, table1, project2, dataset2, table2):
     """
@@ -9,9 +12,9 @@ def compare_schemas(project1, dataset1, table1, project2, dataset2, table2):
     schema1 = bq.get_table_schema(project1, dataset1, table1)
     schema2 = bq.get_table_schema(project2, dataset2, table2)
 
-    # Create lookup dictionaries
-    schema1_dict = {col['name']: col for col in schema1}
-    schema2_dict = {col['name']: col for col in schema2}
+    # Create lookup dictionaries (excluding Fivetran columns)
+    schema1_dict = {col['name']: col for col in schema1 if col['name'] not in EXCLUDED_COLUMNS}
+    schema2_dict = {col['name']: col for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
 
     all_columns = set(schema1_dict.keys()) | set(schema2_dict.keys())
 
@@ -99,9 +102,9 @@ def compare_column_stats(project1, dataset1, table1, project2, dataset2, table2,
     schema1 = bq.get_table_schema(project1, dataset1, table1)
     schema2 = bq.get_table_schema(project2, dataset2, table2)
 
-    # Find common columns
-    schema1_dict = {col['name']: col for col in schema1}
-    schema2_dict = {col['name']: col for col in schema2}
+    # Find common columns (excluding Fivetran columns)
+    schema1_dict = {col['name']: col for col in schema1 if col['name'] not in EXCLUDED_COLUMNS}
+    schema2_dict = {col['name']: col for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
     common_columns = set(schema1_dict.keys()) & set(schema2_dict.keys())
 
     # Get stats for common columns only
@@ -162,9 +165,9 @@ def find_row_diff(project1, dataset1, table1, project2, dataset2, table2, where_
     schema1 = bq.get_table_schema(project1, dataset1, table1)
     schema2 = bq.get_table_schema(project2, dataset2, table2)
 
-    # Find common column names (preserve order from source table)
-    schema2_names = {col['name'] for col in schema2}
-    common_columns = [col['name'] for col in schema1 if col['name'] in schema2_names]
+    # Find common column names (preserve order from source table, excluding Fivetran columns)
+    schema2_names = {col['name'] for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
+    common_columns = [col['name'] for col in schema1 if col['name'] in schema2_names and col['name'] not in EXCLUDED_COLUMNS]
 
     return bq.find_row_differences_no_pk(project1, dataset1, table1, project2, dataset2, table2, common_columns, where_filter=where_filter)
 

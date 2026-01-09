@@ -10,6 +10,9 @@ import config
 # Cache the client instance
 _client = None
 
+# Columns to exclude from comparisons (Fivetran metadata columns)
+EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced'}
+
 # =============================================================================
 # LOGGING & INSTRUMENTATION
 # =============================================================================
@@ -352,16 +355,19 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
     # Handle multiple primary keys
     pk_columns = [col.strip() for col in primary_key.split(',')]
     
-    # Get schemas to find common columns for the diff query
+    # Get schemas to find common columns for the diff query (excluding Fivetran columns)
     schema1 = get_table_schema(project1, dataset1, table1)
     schema2 = get_table_schema(project2, dataset2, table2)
-    schema1_names = {col['name'] for col in schema1}
-    schema2_names = {col['name'] for col in schema2}
+    schema1_names = {col['name'] for col in schema1 if col['name'] not in EXCLUDED_COLUMNS}
+    schema2_names = {col['name'] for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
     common_columns = sorted(schema1_names & schema2_names)
-    
+
     # Build list of non-PK common columns for SELECT
     non_pk_common_columns = [col for col in common_columns if col not in pk_columns]
-    
+
+    # Build column select list for CTEs (common columns only, excludes Fivetran columns)
+    common_columns_sql = ', '.join([f'`{col}`' for col in common_columns])
+
     # Build JOIN condition for multiple primary keys
     join_conditions = ' AND '.join([f"t1.`{col}` = t2.`{col}`" for col in pk_columns])
     
@@ -458,27 +464,34 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
         results['only_in_table2_error'] = str(e)
         log_response(entry, (time.time() - start) * 1000, error=e)
 
-    # Find rows with different values (using EXCEPT)
+    # Find rows with different values (using JOIN with column comparisons)
     # Build SELECT list for primary key columns
     def pk_select_list(alias):
         return ', '.join([f"{alias}.`{col}`" for col in pk_columns])
-    
-    pk_select_list_alias = ', '.join([f"`{col}`" for col in pk_columns])
-    
-    # Build WHERE condition for matching primary keys in EXISTS clauses
-    # Note: The table alias (t1/t2) in the condition will match the outer query's alias
-    def pk_where_condition(alias, cte_name='matched_keys'):
-        return ' AND '.join([f"{alias}.`{col}` = {cte_name}.`{col}`" for col in pk_columns])
-    
-    # Build SELECT list for non-PK common columns
-    def non_pk_select_list(alias):
+
+    # Build SELECT list for non-PK common columns with source/target prefixes
+    def non_pk_select_list_both():
         if non_pk_common_columns:
-            return ', ' + ', '.join([f"{alias}.`{col}`" for col in non_pk_common_columns])
+            parts = []
+            for col in non_pk_common_columns:
+                parts.append(f"t1.`{col}` as `source_{col}`")
+                parts.append(f"t2.`{col}` as `target_{col}`")
+            return ', ' + ', '.join(parts)
         return ''
-    
+
     # Build ORDER BY for primary keys
     order_by_list = ', '.join([f"`{col}`" for col in pk_columns])
-    
+
+    # Build WHERE condition for column differences (NULL = NULL is considered equal)
+    # Condition: values are different if NOT (t1.col = t2.col OR (t1.col IS NULL AND t2.col IS NULL))
+    def column_diff_conditions():
+        if non_pk_common_columns:
+            conditions = []
+            for col in non_pk_common_columns:
+                conditions.append(f"NOT (t1.`{col}` = t2.`{col}` OR (t1.`{col}` IS NULL AND t2.`{col}` IS NULL))")
+            return ' OR '.join(conditions)
+        return '1=0'  # No columns to compare
+
     if where_filter:
         query_diff = f"""
             WITH filtered_t1 AS (
@@ -486,76 +499,22 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
             ),
             filtered_t2 AS (
                 SELECT * FROM {table2_ref} WHERE {where_filter}
-            ),
-            matched_keys AS (
-                SELECT {pk_select_list('t1')}
-                FROM filtered_t1 t1
-                INNER JOIN filtered_t2 t2 ON {join_conditions}
-            ),
-            t1_rows AS (
-                SELECT * FROM filtered_t1 t1 WHERE EXISTS (
-                    SELECT 1 FROM matched_keys WHERE {pk_where_condition('t1')}
-                )
-            ),
-            t2_rows AS (
-                SELECT * FROM filtered_t2 t2 WHERE EXISTS (
-                    SELECT 1 FROM matched_keys WHERE {pk_where_condition('t2')}
-                )
-            ),
-            diff_keys AS (
-                SELECT {pk_select_list_alias} FROM t1_rows
-                EXCEPT DISTINCT
-                SELECT {pk_select_list_alias} FROM t2_rows
             )
-            SELECT {pk_select_list('t1')}, 'table1' as source{non_pk_select_list('t1')}
+            SELECT {pk_select_list('t1')}{non_pk_select_list_both()}
             FROM filtered_t1 t1
-            WHERE EXISTS (
-                SELECT 1 FROM diff_keys WHERE {pk_where_condition('t1', 'diff_keys')}
-            )
-            UNION ALL
-            SELECT {pk_select_list('t2')}, 'table2' as source{non_pk_select_list('t2')}
-            FROM filtered_t2 t2
-            WHERE EXISTS (
-                SELECT 1 FROM diff_keys WHERE {pk_where_condition('t2', 'diff_keys')}
-            )
-            ORDER BY {order_by_list}, source
-            LIMIT {limit * 2}
+            INNER JOIN filtered_t2 t2 ON {join_conditions}
+            WHERE {column_diff_conditions()}
+            ORDER BY {order_by_list}
+            LIMIT {limit}
         """
     else:
         query_diff = f"""
-            WITH matched_keys AS (
-                SELECT {pk_select_list('t1')}
-                FROM {table1_ref} t1
-                INNER JOIN {table2_ref} t2 ON {join_conditions}
-            ),
-            t1_rows AS (
-                SELECT * FROM {table1_ref} t1 WHERE EXISTS (
-                    SELECT 1 FROM matched_keys WHERE {pk_where_condition('t1')}
-                )
-            ),
-            t2_rows AS (
-                SELECT * FROM {table2_ref} t2 WHERE EXISTS (
-                    SELECT 1 FROM matched_keys WHERE {pk_where_condition('t2')}
-                )
-            ),
-            diff_keys AS (
-                SELECT {pk_select_list_alias} FROM t1_rows
-                EXCEPT DISTINCT
-                SELECT {pk_select_list_alias} FROM t2_rows
-            )
-            SELECT {pk_select_list('t1')}, 'table1' as source{non_pk_select_list('t1')}
+            SELECT {pk_select_list('t1')}{non_pk_select_list_both()}
             FROM {table1_ref} t1
-            WHERE EXISTS (
-                SELECT 1 FROM diff_keys WHERE {pk_where_condition('t1', 'diff_keys')}
-            )
-            UNION ALL
-            SELECT {pk_select_list('t2')}, 'table2' as source{non_pk_select_list('t2')}
-            FROM {table2_ref} t2
-            WHERE EXISTS (
-                SELECT 1 FROM diff_keys WHERE {pk_where_condition('t2', 'diff_keys')}
-            )
-            ORDER BY {order_by_list}, source
-            LIMIT {limit * 2}
+            INNER JOIN {table2_ref} t2 ON {join_conditions}
+            WHERE {column_diff_conditions()}
+            ORDER BY {order_by_list}
+            LIMIT {limit}
         """
 
     entry = log_request('find_row_differences:diff_values', {
@@ -604,44 +563,19 @@ FROM filtered_t2 t2
 LEFT JOIN filtered_t1 t1 ON {join_conditions}
 WHERE {where_null_condition('t1')}""",
             'different_values': f"""-- Rows with different values (by primary key: {primary_key})
+-- Note: Excludes _fivetran_id and _fivetran_synced columns from comparison
+-- NULL = NULL is treated as equal
 WITH filtered_t1 AS (
     SELECT * FROM {table1_ref} WHERE {where_filter}
 ),
 filtered_t2 AS (
     SELECT * FROM {table2_ref} WHERE {where_filter}
-),
-matched_keys AS (
-    SELECT {pk_select_list('t1')}
-    FROM filtered_t1 t1
-    INNER JOIN filtered_t2 t2 ON {join_conditions}
-),
-t1_rows AS (
-    SELECT * FROM filtered_t1 t1 WHERE EXISTS (
-        SELECT 1 FROM matched_keys WHERE {pk_where_condition('t1')}
-    )
-),
-t2_rows AS (
-    SELECT * FROM filtered_t2 t2 WHERE EXISTS (
-        SELECT 1 FROM matched_keys WHERE {pk_where_condition('t2')}
-    )
-),
-diff_keys AS (
-    SELECT {pk_select_list_alias} FROM t1_rows
-    EXCEPT DISTINCT
-    SELECT {pk_select_list_alias} FROM t2_rows
 )
-SELECT {pk_select_list('t1')}, 'table1' as source{non_pk_select_list('t1')}
+SELECT {pk_select_list('t1')}{non_pk_select_list_both()}
 FROM filtered_t1 t1
-WHERE EXISTS (
-    SELECT 1 FROM diff_keys WHERE {pk_where_condition('t1', 'diff_keys')}
-)
-UNION ALL
-SELECT {pk_select_list('t2')}, 'table2' as source{non_pk_select_list('t2')}
-FROM filtered_t2 t2
-WHERE EXISTS (
-    SELECT 1 FROM diff_keys WHERE {pk_where_condition('t2', 'diff_keys')}
-)
-ORDER BY {order_by_list}, source"""
+INNER JOIN filtered_t2 t2 ON {join_conditions}
+WHERE {column_diff_conditions()}
+ORDER BY {order_by_list}"""
         }
     else:
         results['queries'] = {
@@ -656,38 +590,13 @@ FROM {table2_ref} t2
 LEFT JOIN {table1_ref} t1 ON {join_conditions}
 WHERE {where_null_condition('t1')}""",
             'different_values': f"""-- Rows with different values (by primary key: {primary_key})
-WITH matched_keys AS (
-    SELECT {pk_select_list('t1')}
-    FROM {table1_ref} t1
-    INNER JOIN {table2_ref} t2 ON {join_conditions}
-),
-t1_rows AS (
-    SELECT * FROM {table1_ref} t1 WHERE EXISTS (
-        SELECT 1 FROM matched_keys WHERE {pk_where_condition('t1')}
-    )
-),
-t2_rows AS (
-    SELECT * FROM {table2_ref} t2 WHERE EXISTS (
-        SELECT 1 FROM matched_keys WHERE {pk_where_condition('t2')}
-    )
-),
-diff_keys AS (
-    SELECT {pk_select_list_alias} FROM t1_rows
-    EXCEPT DISTINCT
-    SELECT {pk_select_list_alias} FROM t2_rows
-)
-SELECT {pk_select_list('t1')}, 'table1' as source{non_pk_select_list('t1')}
+-- Note: Excludes _fivetran_id and _fivetran_synced columns from comparison
+-- NULL = NULL is treated as equal
+SELECT {pk_select_list('t1')}{non_pk_select_list_both()}
 FROM {table1_ref} t1
-WHERE EXISTS (
-    SELECT 1 FROM diff_keys WHERE {pk_where_condition('t1', 'diff_keys')}
-)
-UNION ALL
-SELECT {pk_select_list('t2')}, 'table2' as source{non_pk_select_list('t2')}
-FROM {table2_ref} t2
-WHERE EXISTS (
-    SELECT 1 FROM diff_keys WHERE {pk_where_condition('t2', 'diff_keys')}
-)
-ORDER BY {order_by_list}, source"""
+INNER JOIN {table2_ref} t2 ON {join_conditions}
+WHERE {column_diff_conditions()}
+ORDER BY {order_by_list}"""
         }
 
     return results

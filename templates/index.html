@@ -273,12 +273,12 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Dataset</label>
-                            <input type="text" id="dataset1" class="form-control" list="dataset1-list" placeholder="Type to filter..." autocomplete="off" value="stg_marketing">
+                            <input type="text" id="dataset1" class="form-control" list="dataset1-list" placeholder="Type to filter..." autocomplete="off">
                             <datalist id="dataset1-list"></datalist>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Table</label>
-                            <input type="text" id="table1" class="form-control" list="table1-list" placeholder="Type to filter..." autocomplete="off" value="stg_marketing__pinterest_performance">
+                            <input type="text" id="table1" class="form-control" list="table1-list" placeholder="Type to filter..." autocomplete="off">
                             <datalist id="table1-list"></datalist>
                         </div>
                     </div>
@@ -298,12 +298,12 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Dataset</label>
-                            <input type="text" id="dataset2" class="form-control" list="dataset2-list" placeholder="Type to filter..." autocomplete="off" value="dbt_lorenzo_stg_marketing">
+                            <input type="text" id="dataset2" class="form-control" list="dataset2-list" placeholder="Type to filter..." autocomplete="off">
                             <datalist id="dataset2-list"></datalist>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Table</label>
-                            <input type="text" id="table2" class="form-control" list="table2-list" placeholder="Type to filter..." autocomplete="off" value="stg_marketing__pinterest_performance">
+                            <input type="text" id="table2" class="form-control" list="table2-list" placeholder="Type to filter..." autocomplete="off">
                             <datalist id="table2-list"></datalist>
                         </div>
                     </div>
@@ -583,10 +583,6 @@
                 const options = data.projects.map(p => `<option value="${p}">${p}</option>`).join('');
                 document.getElementById('project1').innerHTML = '<option value="">Select project...</option>' + options;
                 document.getElementById('project2').innerHTML = '<option value="">Select project...</option>' + options;
-
-                // DEV: Auto-select default projects
-                document.getElementById('project1').value = 'tecovas-staging';
-                document.getElementById('project2').value = 'tecovas-development';
             } catch (e) {
                 showError('Failed to load projects: ' + e.message);
             }
