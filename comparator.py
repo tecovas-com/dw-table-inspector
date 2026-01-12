@@ -1,7 +1,10 @@
 import bigquery_client as bq
 
-# Columns to exclude from comparisons (Fivetran metadata columns)
-EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced'}
+# Columns to exclude from comparisons (Fivetran/dbt metadata columns)
+EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced', '_dbt_loaded_at'}
+
+# Column types to exclude from EXCEPT DISTINCT comparisons (not supported by BigQuery)
+EXCLUDED_TYPES_FOR_DISTINCT = {'STRUCT', 'RECORD', 'ARRAY'}
 
 
 def compare_schemas(project1, dataset1, table1, project2, dataset2, table2):
@@ -165,9 +168,17 @@ def find_row_diff(project1, dataset1, table1, project2, dataset2, table2, where_
     schema1 = bq.get_table_schema(project1, dataset1, table1)
     schema2 = bq.get_table_schema(project2, dataset2, table2)
 
-    # Find common column names (preserve order from source table, excluding Fivetran columns)
-    schema2_names = {col['name'] for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
-    common_columns = [col['name'] for col in schema1 if col['name'] in schema2_names and col['name'] not in EXCLUDED_COLUMNS]
+    # Build lookup for schema2 names and types
+    schema2_dict = {col['name']: col['type'] for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
+
+    # Find common column names (preserve order from source table)
+    # Exclude: Fivetran columns and STRUCT/ARRAY types (not supported in EXCEPT DISTINCT)
+    common_columns = [
+        col['name'] for col in schema1
+        if col['name'] in schema2_dict
+        and col['name'] not in EXCLUDED_COLUMNS
+        and col['type'] not in EXCLUDED_TYPES_FOR_DISTINCT
+    ]
 
     return bq.find_row_differences_no_pk(project1, dataset1, table1, project2, dataset2, table2, common_columns, where_filter=where_filter)
 

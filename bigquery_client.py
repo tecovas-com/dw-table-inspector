@@ -11,7 +11,10 @@ import config
 _client = None
 
 # Columns to exclude from comparisons (Fivetran metadata columns)
-EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced'}
+EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced', '_dbt_loaded_at'}
+
+# Column types to exclude from comparisons (not supported in EXCEPT DISTINCT or complex to compare)
+EXCLUDED_TYPES = {'STRUCT', 'RECORD', 'ARRAY'}
 
 # =============================================================================
 # LOGGING & INSTRUMENTATION
@@ -354,18 +357,27 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
 
     # Handle multiple primary keys
     pk_columns = [col.strip() for col in primary_key.split(',')]
-    
-    # Get schemas to find common columns for the diff query (excluding Fivetran columns)
+
+    # Get schemas to find common columns for the diff query
+    # Exclude: Fivetran columns and STRUCT/ARRAY types (not supported in comparisons)
     schema1 = get_table_schema(project1, dataset1, table1)
     schema2 = get_table_schema(project2, dataset2, table2)
-    schema1_names = {col['name'] for col in schema1 if col['name'] not in EXCLUDED_COLUMNS}
-    schema2_names = {col['name'] for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
-    common_columns = sorted(schema1_names & schema2_names)
+
+    # Build dicts with name -> type mapping, excluding Fivetran columns and unsupported types
+    schema1_dict = {
+        col['name']: col['type'] for col in schema1
+        if col['name'] not in EXCLUDED_COLUMNS and col['type'] not in EXCLUDED_TYPES
+    }
+    schema2_dict = {
+        col['name']: col['type'] for col in schema2
+        if col['name'] not in EXCLUDED_COLUMNS and col['type'] not in EXCLUDED_TYPES
+    }
+    common_columns = sorted(set(schema1_dict.keys()) & set(schema2_dict.keys()))
 
     # Build list of non-PK common columns for SELECT
     non_pk_common_columns = [col for col in common_columns if col not in pk_columns]
 
-    # Build column select list for CTEs (common columns only, excludes Fivetran columns)
+    # Build column select list for CTEs (common columns only)
     common_columns_sql = ', '.join([f'`{col}`' for col in common_columns])
 
     # Build JOIN condition for multiple primary keys
