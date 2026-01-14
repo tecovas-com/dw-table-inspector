@@ -1,8 +1,18 @@
 from flask import Flask, render_template, jsonify, request
+from flask.json.provider import DefaultJSONProvider
 import bigquery_client as bq
 import comparator
 
+
+class CustomJSONProvider(DefaultJSONProvider):
+    """Custom JSON provider that converts non-serializable types to strings."""
+
+    def default(self, obj):
+        return str(obj)
+
+
 app = Flask(__name__)
+app.json = CustomJSONProvider(app)
 
 
 @app.route('/')

@@ -11,7 +11,7 @@ import config
 _client = None
 
 # Columns to exclude from comparisons (Fivetran metadata columns)
-EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced', '_dbt_loaded_at'}
+EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced', '_dbt_loaded_at', 'fivetran_index'}
 
 # Column types to exclude from comparisons (not supported in EXCEPT DISTINCT or complex to compare)
 EXCLUDED_TYPES = {'STRUCT', 'RECORD', 'ARRAY'}

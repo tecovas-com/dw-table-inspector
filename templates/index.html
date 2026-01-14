@@ -220,6 +220,54 @@
             color: #166534;
         }
 
+        /* Custom dropdown styles */
+        .dropdown-wrapper {
+            position: relative;
+        }
+
+        .dropdown-panel {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .dropdown-panel.show {
+            display: block;
+        }
+
+        .dropdown-item {
+            padding: 0.5rem 0.875rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .dropdown-item:hover,
+        .dropdown-item.highlighted {
+            background-color: var(--bg-primary);
+        }
+
+        .dropdown-item.selected {
+            background-color: var(--accent-blue);
+            color: white;
+        }
+
+        .dropdown-empty {
+            padding: 0.5rem 0.875rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-style: italic;
+        }
+
         /* Column Statistics table - controlled column widths */
         #statsTableWrapper {
             width: 100%;
@@ -273,13 +321,17 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Dataset</label>
-                            <input type="text" id="dataset1" class="form-control" list="dataset1-list" placeholder="Type to filter..." autocomplete="off">
-                            <datalist id="dataset1-list"></datalist>
+                            <div class="dropdown-wrapper">
+                                <input type="text" id="dataset1" class="form-control" placeholder="Type to filter..." autocomplete="off">
+                                <div id="dataset1-dropdown" class="dropdown-panel"></div>
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Table</label>
-                            <input type="text" id="table1" class="form-control" list="table1-list" placeholder="Type to filter..." autocomplete="off">
-                            <datalist id="table1-list"></datalist>
+                            <div class="dropdown-wrapper">
+                                <input type="text" id="table1" class="form-control" placeholder="Type to filter..." autocomplete="off">
+                                <div id="table1-dropdown" class="dropdown-panel"></div>
+                            </div>
                         </div>
                     </div>
 
@@ -298,13 +350,17 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Dataset</label>
-                            <input type="text" id="dataset2" class="form-control" list="dataset2-list" placeholder="Type to filter..." autocomplete="off">
-                            <datalist id="dataset2-list"></datalist>
+                            <div class="dropdown-wrapper">
+                                <input type="text" id="dataset2" class="form-control" placeholder="Type to filter..." autocomplete="off">
+                                <div id="dataset2-dropdown" class="dropdown-panel"></div>
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Table</label>
-                            <input type="text" id="table2" class="form-control" list="table2-list" placeholder="Type to filter..." autocomplete="off">
-                            <datalist id="table2-list"></datalist>
+                            <div class="dropdown-wrapper">
+                                <input type="text" id="table2" class="form-control" placeholder="Type to filter..." autocomplete="off">
+                                <div id="table2-dropdown" class="dropdown-panel"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -544,10 +600,122 @@
             tables: {}     // { "project.dataset": ["table1", "table2", ...] }
         };
 
-        // Update datalist with options
-        function updateDatalist(datalistId, options) {
-            const datalist = document.getElementById(datalistId);
-            datalist.innerHTML = options.map(opt => `<option value="${opt}">`).join('');
+        // Custom dropdown state
+        const dropdownState = {
+            dataset1: { options: [], highlighted: -1 },
+            dataset2: { options: [], highlighted: -1 },
+            table1: { options: [], highlighted: -1 },
+            table2: { options: [], highlighted: -1 }
+        };
+
+        // Setup custom dropdown for an input
+        function setupDropdown(inputId, dropdownId, onSelect) {
+            const input = document.getElementById(inputId);
+            const dropdown = document.getElementById(dropdownId);
+            const state = dropdownState[inputId];
+
+            // Show dropdown on focus
+            input.addEventListener('focus', () => {
+                if (state.options.length > 0) {
+                    renderDropdown(inputId, dropdownId);
+                    dropdown.classList.add('show');
+                }
+            });
+
+            // Filter on input
+            input.addEventListener('input', () => {
+                renderDropdown(inputId, dropdownId);
+                if (state.options.length > 0) {
+                    dropdown.classList.add('show');
+                }
+            });
+
+            // Keyboard navigation
+            input.addEventListener('keydown', (e) => {
+                const items = dropdown.querySelectorAll('.dropdown-item');
+                if (!dropdown.classList.contains('show') || items.length === 0) return;
+
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    state.highlighted = Math.min(state.highlighted + 1, items.length - 1);
+                    updateHighlight(dropdown, state.highlighted);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    state.highlighted = Math.max(state.highlighted - 1, 0);
+                    updateHighlight(dropdown, state.highlighted);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (state.highlighted >= 0 && items[state.highlighted]) {
+                        const value = items[state.highlighted].dataset.value;
+                        input.value = value;
+                        dropdown.classList.remove('show');
+                        state.highlighted = -1;
+                        if (onSelect) onSelect(value);
+                    }
+                } else if (e.key === 'Escape') {
+                    dropdown.classList.remove('show');
+                    state.highlighted = -1;
+                }
+            });
+
+            // Hide dropdown on blur (with delay for click to register)
+            input.addEventListener('blur', () => {
+                setTimeout(() => {
+                    dropdown.classList.remove('show');
+                    state.highlighted = -1;
+                    // Trigger onSelect if value matches an option
+                    if (state.options.includes(input.value) && onSelect) {
+                        onSelect(input.value);
+                    }
+                }, 150);
+            });
+        }
+
+        function renderDropdown(inputId, dropdownId) {
+            const input = document.getElementById(inputId);
+            const dropdown = document.getElementById(dropdownId);
+            const state = dropdownState[inputId];
+            const filter = input.value.toLowerCase();
+
+            const filtered = state.options.filter(opt =>
+                opt.toLowerCase().includes(filter)
+            );
+
+            if (filtered.length === 0) {
+                dropdown.innerHTML = '<div class="dropdown-empty">No matches</div>';
+            } else {
+                dropdown.innerHTML = filtered.map(opt =>
+                    `<div class="dropdown-item" data-value="${opt}">${opt}</div>`
+                ).join('');
+
+                // Add click handlers
+                dropdown.querySelectorAll('.dropdown-item').forEach(item => {
+                    item.addEventListener('mousedown', (e) => {
+                        e.preventDefault();
+                        input.value = item.dataset.value;
+                        dropdown.classList.remove('show');
+                        // Trigger the select callback
+                        const tableNum = inputId.replace(/\D/g, '');
+                        if (inputId.startsWith('dataset')) {
+                            loadTables(parseInt(tableNum));
+                        }
+                    });
+                });
+            }
+
+            state.highlighted = -1;
+        }
+
+        function updateHighlight(dropdown, index) {
+            dropdown.querySelectorAll('.dropdown-item').forEach((item, i) => {
+                item.classList.toggle('highlighted', i === index);
+            });
+        }
+
+        function setDropdownOptions(inputId, dropdownId, options) {
+            dropdownState[inputId].options = options;
+            dropdownState[inputId].highlighted = -1;
+            renderDropdown(inputId, dropdownId);
         }
 
         // Load projects on page load
@@ -558,10 +726,11 @@
             document.getElementById('project1').addEventListener('change', () => loadDatasets(1));
             document.getElementById('project2').addEventListener('change', () => loadDatasets(2));
 
-            // Dataset selected -> load tables (ONE API call, then cached)
-            // Use 'change' event which fires when user selects from datalist
-            document.getElementById('dataset1').addEventListener('change', () => loadTables(1));
-            document.getElementById('dataset2').addEventListener('change', () => loadTables(2));
+            // Setup custom dropdowns
+            setupDropdown('dataset1', 'dataset1-dropdown', () => loadTables(1));
+            setupDropdown('dataset2', 'dataset2-dropdown', () => loadTables(2));
+            setupDropdown('table1', 'table1-dropdown');
+            setupDropdown('table2', 'table2-dropdown');
         });
 
         async function loadProjects() {
@@ -596,14 +765,14 @@
             // Clear downstream fields
             datasetInput.value = '';
             tableInput.value = '';
-            updateDatalist(`dataset${tableNum}-list`, []);
-            updateDatalist(`table${tableNum}-list`, []);
+            setDropdownOptions(`dataset${tableNum}`, `dataset${tableNum}-dropdown`, []);
+            setDropdownOptions(`table${tableNum}`, `table${tableNum}-dropdown`, []);
 
             if (!project) return;
 
             // Check cache first
             if (cache.datasets[project]) {
-                updateDatalist(`dataset${tableNum}-list`, cache.datasets[project]);
+                setDropdownOptions(`dataset${tableNum}`, `dataset${tableNum}-dropdown`, cache.datasets[project]);
                 return;
             }
 
@@ -618,7 +787,7 @@
 
                 // Cache the result
                 cache.datasets[project] = data.datasets;
-                updateDatalist(`dataset${tableNum}-list`, data.datasets);
+                setDropdownOptions(`dataset${tableNum}`, `dataset${tableNum}-dropdown`, data.datasets);
             } catch (e) {
                 showError('Failed to load datasets: ' + e.message);
             }
@@ -631,7 +800,7 @@
 
             // Clear table field
             tableInput.value = '';
-            updateDatalist(`table${tableNum}-list`, []);
+            setDropdownOptions(`table${tableNum}`, `table${tableNum}-dropdown`, []);
 
             if (!project || !dataset) return;
 
@@ -639,7 +808,7 @@
 
             // Check cache first
             if (cache.tables[cacheKey]) {
-                updateDatalist(`table${tableNum}-list`, cache.tables[cacheKey]);
+                setDropdownOptions(`table${tableNum}`, `table${tableNum}-dropdown`, cache.tables[cacheKey]);
                 return;
             }
 
@@ -654,7 +823,7 @@
 
                 // Cache the result
                 cache.tables[cacheKey] = data.tables;
-                updateDatalist(`table${tableNum}-list`, data.tables);
+                setDropdownOptions(`table${tableNum}`, `table${tableNum}-dropdown`, data.tables);
             } catch (e) {
                 showError('Failed to load tables: ' + e.message);
             }

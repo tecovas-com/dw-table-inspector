@@ -1,7 +1,7 @@
 import bigquery_client as bq
 
 # Columns to exclude from comparisons (Fivetran/dbt metadata columns)
-EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced', '_dbt_loaded_at'}
+EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced', '_dbt_loaded_at', 'fivetran_index', 'date_created', 'fivetran_synced_at', 'created_date'}
 
 # Column types to exclude from EXCEPT DISTINCT comparisons (not supported by BigQuery)
 EXCLUDED_TYPES_FOR_DISTINCT = {'STRUCT', 'RECORD', 'ARRAY'}
