@@ -7,6 +7,39 @@ EXCLUDED_COLUMNS = {'_fivetran_id', '_fivetran_synced', '_dbt_loaded_at', 'fivet
 EXCLUDED_TYPES_FOR_DISTINCT = {'STRUCT', 'RECORD', 'ARRAY'}
 
 
+def get_common_columns_info(project1, dataset1, table1, project2, dataset2, table2):
+    """
+    Get common columns between two tables with detailed info for UI.
+    Returns list of dicts with: name, type, mode, in_table1, in_table2, is_common, type_mismatch
+    """
+    schema1 = bq.get_table_schema(project1, dataset1, table1)
+    schema2 = bq.get_table_schema(project2, dataset2, table2)
+
+    # Create lookup dictionaries (excluding Fivetran columns)
+    schema1_dict = {col['name']: col for col in schema1 if col['name'] not in EXCLUDED_COLUMNS}
+    schema2_dict = {col['name']: col for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
+
+    all_columns = set(schema1_dict.keys()) | set(schema2_dict.keys())
+    common_columns = set(schema1_dict.keys()) & set(schema2_dict.keys())
+
+    result = []
+    for col_name in sorted(all_columns):
+        col1 = schema1_dict.get(col_name)
+        col2 = schema2_dict.get(col_name)
+
+        result.append({
+            'name': col_name,
+            'type': col1['type'] if col1 else col2['type'],
+            'mode': col1['mode'] if col1 else col2['mode'],
+            'in_table1': col1 is not None,
+            'in_table2': col2 is not None,
+            'is_common': col_name in common_columns,
+            'type_mismatch': (col1 is not None and col2 is not None and col1['type'] != col2['type'])
+        })
+
+    return result
+
+
 def compare_schemas(project1, dataset1, table1, project2, dataset2, table2):
     """
     Compare schemas of two tables.
@@ -97,10 +130,13 @@ def compare_row_counts(project1, dataset1, table1, project2, dataset2, table2, w
     }
 
 
-def compare_column_stats(project1, dataset1, table1, project2, dataset2, table2, where_filter=None):
+def compare_column_stats(project1, dataset1, table1, project2, dataset2, table2, where_filter=None, selected_columns=None):
     """
     Compare column statistics between two tables.
     Only compares columns that exist in both tables.
+
+    Args:
+        selected_columns: Optional list of column names to include. If None, uses all common columns.
     """
     schema1 = bq.get_table_schema(project1, dataset1, table1)
     schema2 = bq.get_table_schema(project2, dataset2, table2)
@@ -109,6 +145,11 @@ def compare_column_stats(project1, dataset1, table1, project2, dataset2, table2,
     schema1_dict = {col['name']: col for col in schema1 if col['name'] not in EXCLUDED_COLUMNS}
     schema2_dict = {col['name']: col for col in schema2 if col['name'] not in EXCLUDED_COLUMNS}
     common_columns = set(schema1_dict.keys()) & set(schema2_dict.keys())
+
+    # Filter by selected columns if provided
+    if selected_columns:
+        selected_set = set(selected_columns)
+        common_columns = common_columns & selected_set
 
     # Get stats for common columns only
     common_schema = [col for col in schema1 if col['name'] in common_columns]
@@ -151,18 +192,24 @@ def compare_column_stats(project1, dataset1, table1, project2, dataset2, table2,
     }
 
 
-def find_mismatches(project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter=None):
+def find_mismatches(project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter=None, selected_columns=None):
     """
     Find sample rows that differ between tables using primary key.
+
+    Args:
+        selected_columns: Optional list of column names to include in comparison. If None, uses all common columns.
     """
-    return bq.find_row_differences(project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter=where_filter)
+    return bq.find_row_differences(project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter=where_filter, selected_columns=selected_columns)
 
 
-def find_row_diff(project1, dataset1, table1, project2, dataset2, table2, where_filter=None):
+def find_row_diff(project1, dataset1, table1, project2, dataset2, table2, where_filter=None, selected_columns=None):
     """
     Find row differences using EXCEPT DISTINCT (no primary key needed).
     Only compares columns that exist in both tables.
     Returns counts and sample rows.
+
+    Args:
+        selected_columns: Optional list of column names to include. If None, uses all common columns.
     """
     # Get schemas to find common columns
     schema1 = bq.get_table_schema(project1, dataset1, table1)
@@ -180,31 +227,39 @@ def find_row_diff(project1, dataset1, table1, project2, dataset2, table2, where_
         and col['type'] not in EXCLUDED_TYPES_FOR_DISTINCT
     ]
 
+    # Filter by selected columns if provided
+    if selected_columns:
+        selected_set = set(selected_columns)
+        common_columns = [c for c in common_columns if c in selected_set]
+
     return bq.find_row_differences_no_pk(project1, dataset1, table1, project2, dataset2, table2, common_columns, where_filter=where_filter)
 
 
-def run_full_comparison(project1, dataset1, table1, project2, dataset2, table2, primary_key=None, where_filter=None):
+def run_full_comparison(project1, dataset1, table1, project2, dataset2, table2, primary_key=None, where_filter=None, selected_columns=None):
     """
     Run a complete comparison between two tables.
+
+    Args:
+        selected_columns: Optional list of column names to include in row diff. If None, uses all common columns.
     """
     results = {
         'table1': f"{project1}.{dataset1}.{table1}",
         'table2': f"{project2}.{dataset2}.{table2}",
         'schema': compare_schemas(project1, dataset1, table1, project2, dataset2, table2),
         'row_counts': compare_row_counts(project1, dataset1, table1, project2, dataset2, table2, where_filter),
-        'column_stats': compare_column_stats(project1, dataset1, table1, project2, dataset2, table2, where_filter)
+        'column_stats': compare_column_stats(project1, dataset1, table1, project2, dataset2, table2, where_filter, selected_columns)
     }
 
     # Run row-level diff
     if primary_key:
         # Use primary key for detailed mismatch detection
         results['mismatches'] = find_mismatches(
-            project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter
+            project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter, selected_columns
         )
     else:
         # Use EXCEPT DISTINCT for full row comparison (no primary key)
         results['row_diff'] = find_row_diff(
-            project1, dataset1, table1, project2, dataset2, table2, where_filter
+            project1, dataset1, table1, project2, dataset2, table2, where_filter, selected_columns
         )
 
     # Overall match status

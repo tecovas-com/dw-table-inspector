@@ -296,6 +296,143 @@
         #statsTableWrapper td {
             cursor: help;
         }
+
+        /* Column Selector Panel */
+        .column-selector-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background-color: #f1f5f9;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+
+        .column-selector-header:hover {
+            background-color: #e2e8f0;
+        }
+
+        .column-selector-header.expanded {
+            border-radius: 8px 8px 0 0;
+            border-bottom: none;
+        }
+
+        .chevron-icon {
+            transition: transform 0.2s;
+        }
+
+        .chevron-icon.rotated {
+            transform: rotate(180deg);
+        }
+
+        .column-selector-body {
+            display: none;
+            padding: 1rem;
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            background-color: var(--bg-card);
+        }
+
+        .column-selector-body.show {
+            display: block;
+        }
+
+        .column-chips-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        /* Column Chips */
+        .column-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            border: 1px solid transparent;
+            user-select: none;
+        }
+
+        /* Selected (included) state */
+        .column-chip.selected {
+            background-color: var(--accent-blue);
+            color: white;
+            border-color: var(--accent-blue);
+        }
+
+        .column-chip.selected:hover {
+            background-color: var(--accent-blue-hover);
+            border-color: var(--accent-blue-hover);
+        }
+
+        /* Deselected (excluded) state */
+        .column-chip:not(.selected) {
+            background-color: #f1f5f9;
+            color: var(--text-secondary);
+            border-color: var(--border-color);
+        }
+
+        .column-chip:not(.selected):hover {
+            background-color: #e2e8f0;
+            border-color: #cbd5e1;
+        }
+
+        /* Column type badge */
+        .column-type-badge {
+            font-size: 0.625rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+            padding: 0.125rem 0.375rem;
+            border-radius: 4px;
+            opacity: 0.8;
+        }
+
+        .column-chip.selected .column-type-badge {
+            background-color: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .column-chip:not(.selected) .column-type-badge {
+            background-color: rgba(0, 0, 0, 0.08);
+            color: var(--text-secondary);
+        }
+
+        /* Only in one table indicator */
+        .column-chip.only-source {
+            border-left: 3px solid #f59e0b;
+        }
+
+        .column-chip.only-target {
+            border-left: 3px solid #3b82f6;
+        }
+
+        .column-chip.type-mismatch {
+            border-left: 3px solid #ef4444;
+        }
+
+        .column-chip.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .columns-section-label {
+            width: 100%;
+            margin-top: 0.75rem;
+            margin-bottom: 0.375rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
@@ -376,6 +513,36 @@
                         <label class="form-label">WHERE Filter (optional, applies to all queries)</label>
                         <input type="text" id="whereFilter" class="form-control" placeholder="e.g., date >= '2024-01-01' AND status = 'active'">
                         <small class="form-text text-muted">SQL WHERE condition without the WHERE keyword</small>
+                    </div>
+                </div>
+
+                <!-- Column Selector Panel -->
+                <div id="columnSelectorCard" class="mt-4 d-none">
+                    <div class="column-selector-header" onclick="toggleColumnSelector()">
+                        <div class="d-flex align-items-center gap-2">
+                            <svg id="columnSelectorChevron" class="chevron-icon" viewBox="0 0 24 24" width="20" height="20">
+                                <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+                            </svg>
+                            <span class="fw-medium">Column Selection for Row Diff</span>
+                            <span id="columnSelectorCount" class="badge bg-secondary">0 columns</span>
+                        </div>
+                        <div class="d-flex gap-2" onclick="event.stopPropagation()">
+                            <button class="btn btn-sm btn-outline-secondary" onclick="selectAllColumns()">Select All</button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="clearAllColumns()">Clear All</button>
+                        </div>
+                    </div>
+                    <div id="columnSelectorBody" class="column-selector-body">
+                        <div id="columnChipsContainer" class="column-chips-container">
+                            <!-- Chips will be rendered here by JavaScript -->
+                        </div>
+                        <div id="columnSelectorLoading" class="text-center py-3 d-none">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                            <span class="ms-2 text-secondary">Loading columns...</span>
+                        </div>
+                        <div id="columnSelectorEmpty" class="text-center py-3 text-secondary d-none">
+                            Select both tables to see available columns
+                        </div>
+                        <div id="columnSelectorError" class="text-center py-3 text-danger d-none"></div>
                     </div>
                 </div>
 
@@ -608,6 +775,235 @@
             table2: { options: [], highlighted: -1 }
         };
 
+        // Column selector state
+        const columnSelectorState = {
+            columns: [],              // All columns from API
+            selectedColumns: new Set(), // Currently selected column names
+            isExpanded: false,
+            isLoaded: false,
+            lastTableKey: ''          // To detect table changes
+        };
+
+        // Check if both tables are selected and load columns
+        function checkAndLoadColumns() {
+            const project1 = document.getElementById('project1').value;
+            const dataset1 = document.getElementById('dataset1').value;
+            const table1 = document.getElementById('table1').value;
+            const project2 = document.getElementById('project2').value;
+            const dataset2 = document.getElementById('dataset2').value;
+            const table2 = document.getElementById('table2').value;
+
+            const bothTablesSelected = project1 && dataset1 && table1 &&
+                                       project2 && dataset2 && table2;
+
+            const selectorCard = document.getElementById('columnSelectorCard');
+            const tableKey = `${project1}.${dataset1}.${table1}|${project2}.${dataset2}.${table2}`;
+
+            if (bothTablesSelected) {
+                selectorCard.classList.remove('d-none');
+                // Only reload if tables changed
+                if (tableKey !== columnSelectorState.lastTableKey) {
+                    columnSelectorState.lastTableKey = tableKey;
+                    loadCommonColumns();
+                }
+            } else {
+                selectorCard.classList.add('d-none');
+                columnSelectorState.isLoaded = false;
+                columnSelectorState.columns = [];
+                columnSelectorState.selectedColumns.clear();
+                columnSelectorState.lastTableKey = '';
+            }
+        }
+
+        async function loadCommonColumns() {
+            const project1 = document.getElementById('project1').value;
+            const dataset1 = document.getElementById('dataset1').value;
+            const table1 = document.getElementById('table1').value;
+            const project2 = document.getElementById('project2').value;
+            const dataset2 = document.getElementById('dataset2').value;
+            const table2 = document.getElementById('table2').value;
+
+            // Show loading state
+            document.getElementById('columnChipsContainer').innerHTML = '';
+            document.getElementById('columnSelectorLoading').classList.remove('d-none');
+            document.getElementById('columnSelectorEmpty').classList.add('d-none');
+            document.getElementById('columnSelectorError').classList.add('d-none');
+
+            try {
+                const response = await fetch('/api/columns/common', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        project1, dataset1, table1,
+                        project2, dataset2, table2
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    showColumnSelectorError(data.error);
+                    return;
+                }
+
+                columnSelectorState.columns = data.columns;
+                columnSelectorState.isLoaded = true;
+
+                // Select all common columns by default
+                columnSelectorState.selectedColumns = new Set(
+                    data.columns.filter(c => c.is_common).map(c => c.name)
+                );
+
+                renderColumnChips();
+                updateColumnCount();
+
+            } catch (e) {
+                showColumnSelectorError('Failed to load columns: ' + e.message);
+            } finally {
+                document.getElementById('columnSelectorLoading').classList.add('d-none');
+            }
+        }
+
+        function renderColumnChips() {
+            const container = document.getElementById('columnChipsContainer');
+            const columns = columnSelectorState.columns;
+
+            if (columns.length === 0) {
+                document.getElementById('columnSelectorEmpty').classList.remove('d-none');
+                return;
+            }
+
+            // Group: common columns first, then source-only, then target-only
+            const commonCols = columns.filter(c => c.is_common);
+            const sourceOnly = columns.filter(c => c.in_table1 && !c.in_table2);
+            const targetOnly = columns.filter(c => !c.in_table1 && c.in_table2);
+
+            let html = '';
+
+            // Render common columns
+            commonCols.forEach(col => {
+                const isSelected = columnSelectorState.selectedColumns.has(col.name);
+                const extraClass = col.type_mismatch ? 'type-mismatch' : '';
+                html += createChipHtml(col, isSelected, extraClass);
+            });
+
+            // Render source-only columns (non-selectable, for info)
+            if (sourceOnly.length > 0) {
+                html += '<div class="columns-section-label">Only in Source:</div>';
+                sourceOnly.forEach(col => {
+                    html += createChipHtml(col, false, 'only-source disabled', true);
+                });
+            }
+
+            // Render target-only columns (non-selectable, for info)
+            if (targetOnly.length > 0) {
+                html += '<div class="columns-section-label">Only in Target:</div>';
+                targetOnly.forEach(col => {
+                    html += createChipHtml(col, false, 'only-target disabled', true);
+                });
+            }
+
+            container.innerHTML = html;
+        }
+
+        function createChipHtml(col, isSelected, extraClass = '', disabled = false) {
+            const selectedClass = isSelected ? 'selected' : '';
+            const clickHandler = disabled ? '' : `onclick="toggleColumn('${col.name}')"`;
+            const typeAbbrev = getTypeAbbreviation(col.type);
+
+            return `
+                <div class="column-chip ${selectedClass} ${extraClass}" ${clickHandler}>
+                    <span>${col.name}</span>
+                    <span class="column-type-badge">${typeAbbrev}</span>
+                </div>
+            `;
+        }
+
+        function getTypeAbbreviation(type) {
+            const abbrevMap = {
+                'STRING': 'STR',
+                'INT64': 'INT',
+                'FLOAT64': 'FLT',
+                'NUMERIC': 'NUM',
+                'BIGNUMERIC': 'BNUM',
+                'BOOLEAN': 'BOOL',
+                'DATE': 'DATE',
+                'DATETIME': 'DTTM',
+                'TIMESTAMP': 'TS',
+                'TIME': 'TIME',
+                'BYTES': 'BYTE',
+                'GEOGRAPHY': 'GEO',
+                'STRUCT': 'OBJ',
+                'RECORD': 'REC',
+                'ARRAY': 'ARR'
+            };
+            return abbrevMap[type] || type.substring(0, 3).toUpperCase();
+        }
+
+        function toggleColumn(columnName) {
+            if (columnSelectorState.selectedColumns.has(columnName)) {
+                columnSelectorState.selectedColumns.delete(columnName);
+            } else {
+                columnSelectorState.selectedColumns.add(columnName);
+            }
+            renderColumnChips();
+            updateColumnCount();
+        }
+
+        function selectAllColumns() {
+            const commonCols = columnSelectorState.columns.filter(c => c.is_common);
+            columnSelectorState.selectedColumns = new Set(commonCols.map(c => c.name));
+            renderColumnChips();
+            updateColumnCount();
+        }
+
+        function clearAllColumns() {
+            columnSelectorState.selectedColumns.clear();
+            renderColumnChips();
+            updateColumnCount();
+        }
+
+        function toggleColumnSelector() {
+            const header = document.querySelector('.column-selector-header');
+            const body = document.getElementById('columnSelectorBody');
+            const chevron = document.getElementById('columnSelectorChevron');
+
+            columnSelectorState.isExpanded = !columnSelectorState.isExpanded;
+
+            if (columnSelectorState.isExpanded) {
+                header.classList.add('expanded');
+                body.classList.add('show');
+                chevron.classList.add('rotated');
+            } else {
+                header.classList.remove('expanded');
+                body.classList.remove('show');
+                chevron.classList.remove('rotated');
+            }
+        }
+
+        function updateColumnCount() {
+            const count = columnSelectorState.selectedColumns.size;
+            const total = columnSelectorState.columns.filter(c => c.is_common).length;
+            document.getElementById('columnSelectorCount').textContent =
+                `${count}/${total} columns`;
+        }
+
+        function showColumnSelectorError(message) {
+            const errorEl = document.getElementById('columnSelectorError');
+            errorEl.textContent = message;
+            errorEl.classList.remove('d-none');
+        }
+
+        function getSelectedColumns() {
+            // Return null if all common columns selected (no filtering needed)
+            // Otherwise return array of selected column names
+            const commonCols = columnSelectorState.columns.filter(c => c.is_common);
+            if (columnSelectorState.selectedColumns.size === commonCols.length) {
+                return null;  // All selected = no filter
+            }
+            return Array.from(columnSelectorState.selectedColumns);
+        }
+
         // Setup custom dropdown for an input
         function setupDropdown(inputId, dropdownId, onSelect) {
             const input = document.getElementById(inputId);
@@ -729,8 +1125,8 @@
             // Setup custom dropdowns
             setupDropdown('dataset1', 'dataset1-dropdown', () => loadTables(1));
             setupDropdown('dataset2', 'dataset2-dropdown', () => loadTables(2));
-            setupDropdown('table1', 'table1-dropdown');
-            setupDropdown('table2', 'table2-dropdown');
+            setupDropdown('table1', 'table1-dropdown', () => checkAndLoadColumns());
+            setupDropdown('table2', 'table2-dropdown', () => checkAndLoadColumns());
         });
 
         async function loadProjects() {
@@ -851,6 +1247,8 @@
             hideError();
 
             try {
+                const selectedColumns = getSelectedColumns();
+
                 const response = await fetch('/api/compare', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -858,7 +1256,8 @@
                         project1, dataset1, table1,
                         project2, dataset2, table2,
                         primary_key: primaryKey || null,
-                        where_filter: whereFilter || null
+                        where_filter: whereFilter || null,
+                        selected_columns: selectedColumns
                     })
                 });
 

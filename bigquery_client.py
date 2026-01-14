@@ -339,10 +339,13 @@ def get_column_stats(project_id, dataset_id, table_id, columns, where_filter=Non
     return stats
 
 
-def find_row_differences(project1, dataset1, table1, project2, dataset2, table2, primary_key, limit=100, where_filter=None):
+def find_row_differences(project1, dataset1, table1, project2, dataset2, table2, primary_key, limit=100, where_filter=None, selected_columns=None):
     """
     Find rows that exist in one table but not the other, or have different values.
     Returns sample of differing rows.
+
+    Args:
+        selected_columns: Optional list of column names to include in comparison. If None, uses all common columns.
     """
     client = get_client()
     table1_ref = f"`{project1}.{dataset1}.{table1}`"
@@ -373,6 +376,11 @@ def find_row_differences(project1, dataset1, table1, project2, dataset2, table2,
         if col['name'] not in EXCLUDED_COLUMNS and col['type'] not in EXCLUDED_TYPES
     }
     common_columns = sorted(set(schema1_dict.keys()) & set(schema2_dict.keys()))
+
+    # Filter by selected columns if provided
+    if selected_columns:
+        selected_set = set(selected_columns)
+        common_columns = [c for c in common_columns if c in selected_set]
 
     # Build list of non-PK common columns for SELECT
     non_pk_common_columns = [col for col in common_columns if col not in pk_columns]

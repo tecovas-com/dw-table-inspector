@@ -51,6 +51,32 @@ def get_tables(project_id, dataset_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/columns/common', methods=['POST'])
+def get_common_columns():
+    """Get common columns between two tables with schema info."""
+    try:
+        data = request.get_json()
+
+        project1 = data.get('project1')
+        dataset1 = data.get('dataset1')
+        table1 = data.get('table1')
+        project2 = data.get('project2')
+        dataset2 = data.get('dataset2')
+        table2 = data.get('table2')
+
+        if not all([project1, dataset1, table1, project2, dataset2, table2]):
+            return jsonify({'error': 'Missing required parameters'}), 400
+
+        columns = comparator.get_common_columns_info(
+            project1, dataset1, table1,
+            project2, dataset2, table2
+        )
+
+        return jsonify({'columns': columns})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/compare', methods=['POST'])
 def compare_tables():
     """Run full comparison between two tables."""
@@ -65,12 +91,13 @@ def compare_tables():
         table2 = data.get('table2')
         primary_key = data.get('primary_key')
         where_filter = data.get('where_filter')
+        selected_columns = data.get('selected_columns')  # New: list of column names or None
 
         if not all([project1, dataset1, table1, project2, dataset2, table2]):
             return jsonify({'error': 'Missing required parameters'}), 400
 
         results = comparator.run_full_comparison(
-            project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter
+            project1, dataset1, table1, project2, dataset2, table2, primary_key, where_filter, selected_columns
         )
 
         # Add request stats to results
